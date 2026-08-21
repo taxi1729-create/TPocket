@@ -14,22 +14,28 @@ let currentDayIdx = 0;
 let localGroups = {};
 let localShioris = [];
 let showAllScheduleModal = false;
-let editingSpotInfo = null; // { dayIdx, spotIdx }
+let editingSpotIdx = null;
 let editingGroupId = null;
 let editingHeader = false;
-let editingDayIdx = null;
+let editingDayIdx = null; // Day編集用モーダル管理
 
-const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '温泉', '🎟️'];
+const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '♨️', '🎟️'];
 
 db.ref('appData').on('value', (snapshot) => {
   const data = snapshot.val();
   if (data) {
     localGroups = data.groups || {};
+    // グループ初期化時のメンバー補完
+    Object.keys(localGroups).forEach(gId => {
+      if (!localGroups[gId].members) {
+        localGroups[gId].members = ['自分', 'メンバーA'];
+      }
+    });
     localShioris = data.shioris ? Object.keys(data.shioris).map(k => ({ id: k, ...data.shioris[k] })) : [];
   } else {
     const initialData = {
       groups: {
-        'default-group': { name: 'メイン旅行グループ', pass: '1234', members: ['自分', 'パートナー'] },
+        'default-group': { name: 'メイン旅行グループ', pass: '1234', members: ['自分', 'メンバーA'] },
       },
       shioris: {
         'default-shiori': {
@@ -44,7 +50,7 @@ db.ref('appData').on('value', (snapshot) => {
             { id: 'p2', text: 'グアムリーフホテル予約確認', checked: false, link: 'https://guamreef.com' }
           ],
           days: [
-            { dayNum: 1, title: 'Day 1', memo: '空港集合は余裕を持って！', spots: [] },
+            { dayNum: 1, title: 'Day 1', memo: '', spots: [] },
             { dayNum: 2, title: 'Day 2', memo: '', spots: [] }
           ]
         }
@@ -72,7 +78,7 @@ function navigateTo(view, id = null) {
   if (id) currentShioriId = id;
   currentDayIdx = 0;
   showAllScheduleModal = false;
-  editingSpotInfo = null;
+  editingSpotIdx = null;
   editingGroupId = null;
   editingHeader = false;
   editingDayIdx = null;
@@ -80,11 +86,13 @@ function navigateTo(view, id = null) {
   window.scrollTo(0, 0);
 }
 
-function formatDateLabel(startDateStr, dayOffset) {
+// 日付フォーマットヘルパー関数 (YYYY-MM-DD + addDays -> M/D)
+function getFormattedDayDate(startDateStr, dayIdx) {
   if (!startDateStr) return '';
-  const d = new Date(startDateStr);
-  d.setDate(d.getDate() + dayOffset);
-  return `(${d.getMonth() + 1}/${d.getDate()})`;
+  const date = new Date(startDateStr);
+  if (isNaN(date.getTime())) return '';
+  date.setDate(date.getDate() + dayIdx);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function renderApp() {
@@ -121,81 +129,69 @@ function handleImageUpload(inputId, callback) {
   reader.readAsDataURL(el.files[0]);
 }
 
-// 1 & 2. ホーム画面（黒固定ヘッダー ＆ グループメンバー編集）
+// 2. 旅行一覧画面でメンバー編集機能の追加
 function renderHomeScreen() {
   const currentGroup = localGroups[currentGroupId] || { name: '未選択', members: [] };
   const groupShioris = localShioris.filter(s => s.groupId === currentGroupId);
+  const members = currentGroup.members || [];
 
   return `
-    <!-- 1. スクロールしても固定表示される黒いトップヘッダー -->
-    <div class="sticky top-0 z-40 bg-slate-900 text-white px-4 py-3 shadow-md flex items-center justify-between">
-      <div class="flex items-center gap-2">
-        <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white"><i class="fa-solid fa-plane-departure text-sm"></i></div>
-        <div>
-          <h1 class="text-sm font-black tracking-wide leading-none">TPocket</h1>
-          <p class="text-[10px] text-slate-400 font-medium leading-tight mt-0.5">${currentGroup.name}</p>
+    <div class="p-5">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+          <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg"><i class="fa-solid fa-plane-departure text-xl"></i></div>
+          <div><h1 class="text-2xl font-black text-slate-900">TPocket</h1><p class="text-xs text-slate-500 font-medium">${currentGroup.name}</p></div>
         </div>
+        <button onclick="navigateTo('groupAuth')" class="text-xs bg-slate-800 text-white px-3 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md"><i class="fa-solid fa-gear"></i> 設定</button>
       </div>
-      <button onclick="navigateTo('groupAuth')" class="text-xs bg-slate-800 border border-slate-700 text-slate-200 px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 hover:bg-slate-700">
-        <i class="fa-solid fa-gear"></i> グループ切替・設定
-      </button>
-    </div>
 
-    <div class="p-4 space-y-5">
-      <!-- 2. グループメンバー編集セクション -->
-      <div class="bg-slate-100 border rounded-2xl p-3.5 space-y-2">
+      <!-- 共有メンバー編集エリア -->
+      <div class="bg-white border rounded-2xl p-3.5 mb-5 shadow-sm space-y-2">
         <div class="flex items-center justify-between">
-          <span class="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-            <i class="fa-solid fa-users text-blue-600"></i> グループメンバー
-          </span>
-          <span class="text-[10px] text-slate-400">旅行内で担当者として選択可能</span>
+          <h2 class="text-xs font-bold text-slate-700 flex items-center gap-1.5"><i class="fa-solid fa-users text-blue-500"></i> グループ共有メンバー</h2>
+          <span class="text-[10px] text-slate-400 font-bold">${members.length}人</span>
         </div>
-        <div class="flex flex-wrap gap-1.5 items-center">
-          ${(currentGroup.members || []).map((m, mIdx) => `
-            <span class="text-xs bg-white border border-slate-200 px-2.5 py-1 rounded-full font-bold text-slate-700 flex items-center gap-1.5 shadow-sm">
+        <div class="flex flex-wrap gap-1.5">
+          ${members.map((m, idx) => `
+            <span class="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1">
               ${m}
-              <button onclick="deleteGroupMember('${currentGroupId}', ${mIdx})" class="text-slate-300 hover:text-red-500"><i class="fa-solid fa-xmark text-[10px]"></i></button>
+              <button onclick="deleteGroupMember('${currentGroupId}', ${idx})" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-[10px]"></i></button>
             </span>
           `).join('')}
-          <div class="flex items-center gap-1 mt-1 w-full">
-            <input type="text" id="add-member-input" placeholder="メンバー名を追加" class="flex-1 text-xs border rounded-lg p-1.5 bg-white">
-            <button onclick="addGroupMember('${currentGroupId}')" class="bg-blue-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg">追加</button>
-          </div>
+        </div>
+        <div class="flex items-center gap-2 pt-1 border-t mt-2">
+          <input type="text" id="new-group-member-name" placeholder="メンバー名を追加" class="flex-1 border text-xs rounded-lg p-1.5 bg-slate-50">
+          <button onclick="addGroupMember('${currentGroupId}')" class="bg-blue-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg">追加</button>
         </div>
       </div>
 
-      <button onclick="createNewShiori()" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-3.5 px-4 rounded-2xl shadow-lg flex items-center justify-center gap-2">
-        <i class="fa-solid fa-plus"></i><span>新規旅行をつくる</span>
-      </button>
-
-      <div class="space-y-3">
-        <div class="flex items-center justify-between">
-          <h2 class="text-xs font-bold text-slate-600 flex items-center gap-1.5"><i class="fa-solid fa-folder-closed text-blue-500"></i> 旅行一覧</h2>
-          <span class="text-xs text-slate-400 font-bold">${groupShioris.length}件</span>
-        </div>
-        
-        <div class="space-y-3">
-          ${groupShioris.map(s => `
-            <div onclick="navigateTo('detail', '${s.id}')" class="bg-white border rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-all">
-              <div class="h-28 bg-slate-100 relative">
-                <img src="${s.headerImg || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80'}" class="w-full h-full object-cover">
-                <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent"></div>
-                <div class="absolute bottom-3 left-3 right-3 text-white">
-                  <span class="text-[10px] bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full font-medium">${s.destination || '目的地未定'}</span>
-                  <h3 class="font-bold text-sm mt-1 truncate">${s.title}</h3>
-                </div>
+      <button onclick="createNewShiori()" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-3.5 px-4 rounded-2xl shadow-lg flex items-center justify-center gap-3 mb-6"><i class="fa-solid fa-plus"></i><span>旅行をつくる</span></button>
+      
+      <div class="mb-3 flex items-center justify-between">
+        <h2 class="text-base font-bold flex items-center gap-2"><i class="fa-solid fa-folder-closed text-blue-500"></i> 旅行一覧</h2>
+        <span class="text-xs text-slate-400 font-bold">${groupShioris.length}件</span>
+      </div>
+      <div class="space-y-4">
+        ${groupShioris.map(s => `
+          <div onclick="navigateTo('detail', '${s.id}')" class="bg-white border rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-all">
+            <div class="h-32 bg-slate-100 relative">
+              <img src="${s.headerImg || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80'}" class="w-full h-full object-cover">
+              <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"></div>
+              <div class="absolute bottom-3 left-3 text-white">
+                <span class="text-[10px] bg-white/20 backdrop-blur-md px-2 py-0.5 rounded-full font-medium">${s.destination || '目的地未定'}</span>
+                <h3 class="font-bold text-base mt-1">${s.title}</h3>
               </div>
             </div>
-          `).join('')}
-        </div>
+          </div>
+        `).join('')}
       </div>
     </div>
   `;
 }
 
 function addGroupMember(gId) {
-  const input = document.getElementById('add-member-input');
-  if (!input || !input.value.trim()) return;
+  const input = document.getElementById('new-group-member-name');
+  if (!input || !input.value.trim()) return alert('名前を入力してください');
   if (!localGroups[gId].members) localGroups[gId].members = [];
   localGroups[gId].members.push(input.value.trim());
   saveAllToCloud();
@@ -203,7 +199,7 @@ function addGroupMember(gId) {
 }
 
 function deleteGroupMember(gId, idx) {
-  if (localGroups[gId] && localGroups[gId].members) {
+  if (confirm('このメンバーを削除しますか？')) {
     localGroups[gId].members.splice(idx, 1);
     saveAllToCloud();
     renderApp();
@@ -266,28 +262,24 @@ function renderDetailScreen() {
   const shiori = localShioris.find(s => s.id === currentShioriId);
   if (!shiori) return '...';
 
-  const group = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
-  const groupMembers = group.members && group.members.length > 0 ? group.members : ['全員'];
-
   if (!shiori.packingList) shiori.packingList = [];
   if (shiori.showPackingList === undefined) shiori.showPackingList = true;
 
+  const currentGroup = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
+  const groupMembers = currentGroup.members || [];
+
   return `
     <div class="relative bg-slate-50 min-h-screen flex flex-col">
-      <!-- 1. 黒い固定ヘッダー (スクロールしても常に旅行タイトルと旅行一覧を表示) -->
-      <div class="sticky top-0 z-40 bg-slate-900 text-white px-4 py-3 flex justify-between items-center shadow-md">
-        <button onclick="navigateTo('home')" class="text-xs font-bold flex items-center gap-1 text-slate-200 hover:text-white">
-          <i class="fa-solid fa-arrow-left"></i> 旅行一覧
-        </button>
-        <span class="text-xs font-black truncate max-w-[180px] text-center">${shiori.title}</span>
-        <button onclick="showAllScheduleModal = true; renderApp();" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded-lg font-bold">
-          全一覧
-        </button>
+      <!-- 1. 一番上の黒フレーム（固定表示） -->
+      <div class="sticky top-0 z-30 bg-slate-900 text-white p-3 px-4 flex justify-between items-center shadow-md">
+        <button onclick="navigateTo('home')" class="text-xs font-bold flex items-center gap-1.5 hover:text-blue-400"><i class="fa-solid fa-arrow-left"></i> 旅行一覧</button>
+        <span class="text-xs font-black truncate max-w-[160px] text-center">${shiori.title}</span>
+        <button onclick="showAllScheduleModal = true; renderApp();" class="text-xs bg-blue-600 px-3 py-1.5 rounded-lg font-bold">全一覧</button>
       </div>
 
-      <!-- ヘッダー画像・タイトル表示 -->
+      <!-- ヘッダー画像・タイトル -->
       <div class="relative bg-slate-800 text-white">
-        <div class="h-40 w-full relative overflow-hidden">
+        <div class="h-44 w-full relative overflow-hidden">
           <img src="${shiori.headerImg || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80'}" class="w-full h-full object-cover">
           <div class="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent"></div>
         </div>
@@ -295,9 +287,9 @@ function renderDetailScreen() {
         <div class="absolute bottom-3 left-4 right-4 flex items-end justify-between">
           <div>
             <span class="text-[10px] bg-blue-600/80 backdrop-blur-md text-white px-2.5 py-0.5 rounded-full font-bold">${shiori.destination || '目的地未設定'}</span>
-            <h1 class="text-base font-black mt-1 leading-snug drop-shadow">${shiori.title}</h1>
+            <h1 class="text-lg font-black mt-1 leading-snug drop-shadow">${shiori.title}</h1>
           </div>
-          <button onclick="editingHeader = true; renderApp();" class="bg-white/20 backdrop-blur-md text-white border border-white/40 text-xs px-2.5 py-1 rounded-xl font-bold"><i class="fa-solid fa-pen"></i> 編集</button>
+          <button onclick="editingHeader = true; renderApp();" class="bg-white/20 backdrop-blur-md text-white border border-white/40 text-xs px-2.5 py-1 rounded-xl font-bold hover:bg-white/30"><i class="fa-solid fa-pen"></i> 編集</button>
         </div>
       </div>
 
@@ -320,22 +312,23 @@ function renderDetailScreen() {
         </div>
       ` : ''}
 
-      <!-- 持ち物リスト -->
-      <div class="bg-white p-3.5 border-b space-y-2">
+      <!-- 持ち物一覧エリア -->
+      <div class="bg-white p-4 border-b space-y-3">
         <div class="flex items-center justify-between">
           <button onclick="togglePackingList('${shiori.id}')" class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
             <i class="fa-solid fa-suitcase text-blue-600"></i>
             <span>持ち物リスト (${shiori.packingList.filter(p=>p.checked).length}/${shiori.packingList.length})</span>
             <i class="fa-solid ${shiori.showPackingList ? 'fa-chevron-up' : 'fa-chevron-down'} text-[10px] text-slate-400"></i>
           </button>
+          <span class="text-[10px] text-slate-400">各自追加可能</span>
         </div>
 
         ${shiori.showPackingList ? `
           <div class="space-y-2 pt-1">
-            <div class="space-y-1 max-h-36 overflow-y-auto">
-              ${shiori.packingList.length === 0 ? '<div class="text-[11px] text-slate-400 italic">持ち物がありません</div>' : ''}
+            <div class="space-y-1.5 max-h-40 overflow-y-auto">
+              ${shiori.packingList.length === 0 ? '<div class="text-[11px] text-slate-400 italic">持ち物がまだありません</div>' : ''}
               ${shiori.packingList.map((item, pIdx) => `
-                <div class="flex items-center justify-between bg-slate-50 p-1.5 rounded-lg text-xs">
+                <div class="flex items-center justify-between bg-slate-50 p-2 rounded-lg text-xs">
                   <label class="flex items-center gap-2 flex-1 cursor-pointer">
                     <input type="checkbox" ${item.checked ? 'checked' : ''} onchange="togglePackingItem('${shiori.id}', ${pIdx})" class="rounded text-blue-600">
                     <span class="${item.checked ? 'line-through text-slate-400' : 'text-slate-800 font-medium'}">${item.text}</span>
@@ -349,18 +342,19 @@ function renderDetailScreen() {
                 </div>
               `).join('')}
             </div>
-            <div class="flex items-center gap-1.5 pt-1 border-t">
-              <input type="text" id="new-pack-text" placeholder="持ち物名" class="flex-1 border text-xs rounded-lg p-1.5 bg-slate-50">
-              <input type="text" id="new-pack-link" placeholder="URL(任意)" class="w-24 border text-xs rounded-lg p-1.5 bg-slate-50">
-              <button onclick="addPackingItem('${shiori.id}')" class="bg-blue-600 text-white font-bold text-xs px-2.5 py-1.5 rounded-lg">追加</button>
+
+            <div class="flex items-center gap-1.5 pt-2 border-t">
+              <input type="text" id="new-pack-text" placeholder="持ち物名" class="flex-1 border text-xs rounded-lg p-2 bg-slate-50">
+              <input type="text" id="new-pack-link" placeholder="リンクURL(任意)" class="w-28 border text-xs rounded-lg p-2 bg-slate-50">
+              <button onclick="addPackingItem('${shiori.id}')" class="bg-blue-600 text-white font-bold text-xs px-3 py-2 rounded-lg">追加</button>
             </div>
           </div>
         ` : ''}
       </div>
 
-      <!-- 開始日設定 & Dayタブ -->
+      <!-- カレンダー & Dayタブ -->
       <div class="bg-white p-3 border-b space-y-2">
-        <div class="flex justify-between items-center text-xs font-bold text-slate-600">
+        <div class="flex justify-between text-xs font-bold text-slate-600">
           <label class="flex items-center gap-1">
             <i class="fa-regular fa-calendar-days text-blue-600"></i> 開始日:
             <input type="date" value="${shiori.startDate || '2026-09-10'}" onchange="updateStartDate('${shiori.id}', this.value)" class="bg-slate-100 border rounded px-1.5 py-0.5 text-xs font-bold">
@@ -368,82 +362,96 @@ function renderDetailScreen() {
           <button onclick="addDay('${shiori.id}')" class="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-bold border border-blue-200">+ Day追加</button>
         </div>
 
-        <!-- 4. 日付表記付き Day1(9/10), Day2(9/11) タブ -->
+        <!-- Day タブ -->
         <div class="flex gap-2 overflow-x-auto hide-scrollbar pt-1">
           ${shiori.days.map((d, idx) => {
-            const dateStr = formatDateLabel(shiori.startDate, idx);
+            const dateStr = getFormattedDayDate(shiori.startDate, idx);
+            const displayTitle = d.title || `Day ${d.dayNum || idx + 1}`;
             return `
-              <button onclick="scrollToDay(${idx})" class="px-3 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap ${currentDayIdx === idx ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-600'}">
-                ${d.title || ('Day ' + (idx + 1))}${dateStr}
+              <button onclick="scrollToDay(${idx})" class="px-3.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap ${currentDayIdx === idx ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-600'}">
+                ${displayTitle}${dateStr ? ` (${dateStr})` : ''}
               </button>
             `;
           }).join('')}
         </div>
-
-        <!-- 5. 開始日・Dayタブの下に配置された単一のスワイプ案内メッセージ -->
-        <div class="text-center pt-1">
-          <span class="text-[10px] text-slate-400 font-bold bg-slate-100 px-3 py-1 rounded-full"><i class="fa-solid fa-arrows-left-right text-blue-500 mr-1"></i>左右スワイプで日程を切り替えられます</span>
-        </div>
       </div>
 
-      <!-- シームレス横スワイプエリア -->
+      <!-- 5. スワイプ指示表示 (開始日・Dayタブの下に1つだけ配置) -->
+      <div class="text-center py-2 bg-slate-100 border-b text-[11px] text-slate-500 font-bold flex items-center justify-center gap-2">
+        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 👉
+      </div>
+
+      <!-- シームレス横フリック (CSS Scroll Snap) -->
       <div id="snap-scroll-container" class="flex overflow-x-auto snap-x snap-mandatory hide-scrollbar w-full py-4 gap-3 px-4">
         ${shiori.days.map((day, dIdx) => {
-          const dateStr = formatDateLabel(shiori.startDate, dIdx);
+          const dateStr = getFormattedDayDate(shiori.startDate, dIdx);
+          const displayTitle = day.title || `Day ${day.dayNum || dIdx + 1}`;
+
           return `
-            <div class="snap-center shrink-0 w-[88vw] max-w-[370px] bg-slate-100/80 border rounded-3xl p-3.5 space-y-3 shadow-sm flex flex-col justify-between">
+            <div class="snap-center shrink-0 w-[88vw] max-w-[370px] bg-slate-100/70 border rounded-3xl p-4 space-y-4 shadow-sm flex flex-col justify-between">
               <div>
-                <!-- 4. Dayタイトルの横に編集ボタン（タイトル変更、メモ、削除） -->
+                <!-- 4. Dayタイトルの横に編集ボタンを追加、日付フォーマット表記 -->
                 <div class="flex items-center justify-between border-b pb-2 mb-2">
                   <div>
-                    <span class="font-black text-slate-800 text-sm">${day.title || ('Day ' + (dIdx + 1))} ${dateStr}</span>
-                    ${day.memo ? `<p class="text-[11px] text-slate-500 font-medium mt-0.5">${day.memo}</p>` : ''}
+                    <span class="font-black text-slate-800 text-sm">${displayTitle}${dateStr ? ` (${dateStr})` : ''}</span>
+                    ${day.memo ? `<p class="text-[11px] text-slate-500 mt-0.5">${day.memo}</p>` : ''}
                   </div>
-                  <button onclick="openDayEditModal(${dIdx})" class="text-xs bg-white text-slate-600 border px-2 py-1 rounded-lg font-bold shadow-sm hover:bg-slate-50 flex items-center gap-1">
-                    <i class="fa-solid fa-gear text-slate-400"></i> Day編集
+                  <button onclick="editingDayIdx = ${dIdx}; renderApp();" class="text-xs bg-white text-slate-600 border px-2 py-1 rounded-lg font-bold hover:bg-slate-50">
+                    <i class="fa-solid fa-pen"></i> 編集
                   </button>
                 </div>
 
-                <!-- スポット一覧 -->
-                <div class="space-y-2.5">
+                <div class="space-y-3 pt-1">
                   ${(!day.spots || day.spots.length === 0) ? `
                     <div class="text-center py-8 bg-white rounded-2xl border border-dashed text-xs text-slate-400">予定がありません</div>
-                  ` : day.spots.map((spot, sIdx) => `
-                    <div class="bg-white rounded-2xl p-3 border shadow-sm space-y-1.5">
-                      <div class="flex justify-between items-center">
-                        <div class="flex items-center gap-1.5">
-                          <span class="text-base">${spot.icon || '✈️'}</span>
-                          <span class="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-lg">${spot.time}</span>
-                          ${spot.assignedMember ? `<span class="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded-full font-bold">👤 ${spot.assignedMember}</span>` : ''}
+                  ` : day.spots.map((spot, sIdx) => {
+                    const selectedMembers = spot.members || [];
+                    return `
+                      <div class="bg-white rounded-2xl p-3 border shadow-sm space-y-2">
+                        <div class="flex justify-between items-center">
+                          <div class="flex items-center gap-1.5">
+                            <span class="text-base">${spot.icon || '✈️'}</span>
+                            <span class="text-xs font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded-lg">${spot.time}</span>
+                          </div>
+                          <div class="flex gap-1.5">
+                            <button onclick="openEditSpot('${shiori.id}', ${dIdx}, ${sIdx})" class="text-blue-600 text-[10px] font-bold bg-blue-50 px-2 py-0.5 rounded"><i class="fa-solid fa-pen"></i></button>
+                            <button onclick="deleteSpot('${shiori.id}', ${dIdx}, ${sIdx})" class="text-slate-300 hover:text-red-500 text-xs p-1"><i class="fa-solid fa-trash"></i></button>
+                          </div>
                         </div>
-                        <div class="flex gap-1.5">
-                          <button onclick="openEditSpot('${shiori.id}', ${dIdx}, ${sIdx})" class="text-blue-600 text-[10px] font-bold bg-blue-50 px-2 py-0.5 rounded"><i class="fa-solid fa-pen"></i></button>
-                          <button onclick="deleteSpot('${shiori.id}', ${dIdx}, ${sIdx})" class="text-slate-300 hover:text-red-500 text-xs p-1"><i class="fa-solid fa-trash"></i></button>
-                        </div>
+                        <h3 class="font-bold text-sm text-slate-800">${spot.title}</h3>
+                        ${spot.memo ? `<p class="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">${spot.memo}</p>` : ''}
+                        
+                        <!-- 担当メンバー表示 -->
+                        ${selectedMembers.length > 0 ? `
+                          <div class="flex flex-wrap gap-1 pt-1">
+                            ${selectedMembers.map(m => `<span class="text-[9px] bg-indigo-50 text-indigo-600 font-bold px-1.5 py-0.5 rounded"><i class="fa-solid fa-user text-[8px]"></i> ${m}</span>`).join('')}
+                          </div>
+                        ` : ''}
+
+                        <!-- 関連リンク表示 -->
+                        ${spot.link ? `
+                          <div class="pt-0.5">
+                            <a href="${spot.link}" target="_blank" class="text-blue-600 text-[11px] font-bold inline-flex items-center gap-1 hover:underline">
+                              <i class="fa-solid fa-link text-[10px]"></i> 関連リンクを見る
+                            </a>
+                          </div>
+                        ` : ''}
+
+                        ${spot.imgUrl ? `<div class="rounded-xl overflow-hidden border max-h-40 mt-1"><img src="${spot.imgUrl}" class="w-full h-full object-cover"></div>` : ''}
                       </div>
-                      <h3 class="font-bold text-sm text-slate-800">${spot.title}</h3>
-                      ${spot.memo ? `<p class="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">${spot.memo}</p>` : ''}
-                      ${spot.link ? `
-                        <a href="${spot.link}" target="_blank" class="inline-flex items-center gap-1 text-[11px] text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded-md">
-                          <i class="fa-solid fa-arrow-up-right-from-square"></i> 関連リンク
-                        </a>
-                      ` : ''}
-                      ${spot.imgUrl ? `<div class="rounded-xl overflow-hidden border max-h-40 mt-1"><img src="${spot.imgUrl}" class="w-full h-full object-cover"></div>` : ''}
-                    </div>
-                  `).join('')}
+                    `;
+                  }).join('')}
                 </div>
               </div>
 
-              <!-- 3. 予定作成フォーム (画像添付の下にリンク欄・メンバー選択欄・全員ボタン) -->
-              <div class="bg-blue-50/80 border border-blue-200 rounded-2xl p-3 space-y-2 mt-3">
-                <h4 class="text-[11px] font-bold text-blue-900"><i class="fa-solid fa-plus-circle text-blue-600"></i> ${day.title || ('Day ' + (dIdx+1))} に予定を追加</h4>
-                
+              <!-- 3. スポット追加インラインフォーム（画像の下にリンク・メンバー選択追加） -->
+              <div class="bg-blue-50/80 border border-blue-200 rounded-2xl p-3 space-y-2.5 mt-4">
+                <h4 class="text-[11px] font-bold text-blue-900"><i class="fa-solid fa-plus-circle text-blue-600"></i> ${displayTitle} に予定を追加</h4>
                 <input type="hidden" id="input-icon-${dIdx}" value="✈️">
                 <div class="flex gap-1 overflow-x-auto hide-scrollbar pb-1" id="icon-container-${dIdx}">
                   ${defaultIcons.map((icon, i) => `<button type="button" onclick="window.selectIcon('${icon}', this, 'input-icon-${dIdx}', 'icon-container-${dIdx}')" class="icon-btn text-base p-1 bg-white border rounded hover:bg-blue-100 ${i===0?'border-blue-600 ring-2 ring-blue-200':''}">${icon}</button>`).join('')}
                   <input type="text" placeholder="任意" maxlength="2" oninput="window.selectIcon(this.value, this, 'input-icon-${dIdx}', 'icon-container-${dIdx}')" class="icon-btn w-10 text-xs border rounded text-center font-bold bg-white">
                 </div>
-
                 <div class="flex gap-2">
                   <div class="flex items-center gap-0.5 bg-white px-1.5 py-1 border rounded-lg">
                     <select id="input-hour-${dIdx}" class="time-picker-select text-xs">${Array.from({length:24}).map((_,h) => `<option value="${String(h).padStart(2,'0')}">${String(h).padStart(2,'0')}</option>`).join('')}</select>
@@ -452,30 +460,33 @@ function renderDetailScreen() {
                   </div>
                   <input type="text" id="input-title-${dIdx}" placeholder="予定名" class="flex-1 border text-xs rounded-lg p-2 bg-white">
                 </div>
-
                 <input type="text" id="input-memo-${dIdx}" placeholder="メモ（任意）" class="w-full border text-xs rounded-lg p-1.5 bg-white">
-
+                
                 <div class="w-full bg-white border text-[10px] rounded-lg p-1.5 flex justify-between items-center">
-                   <span class="text-slate-500 font-bold">画像添付</span>
+                   <span class="text-slate-500">画像添付</span>
                    <input type="file" id="input-img-file-${dIdx}" accept="image/*" class="text-[9px]">
                 </div>
 
                 <!-- 3. 画像添付の下にリンク欄 -->
-                <input type="text" id="input-link-${dIdx}" placeholder="関連リンクURL (http...)" class="w-full border text-xs rounded-lg p-1.5 bg-white">
+                <input type="url" id="input-link-${dIdx}" placeholder="関連リンクURL (任意)" class="w-full border text-xs rounded-lg p-1.5 bg-white">
 
-                <!-- 3. 担当メンバー選択 (デフォルト全員 / 全員ボタン追加) -->
-                <div class="space-y-1">
+                <!-- 3. メンバー選択 (デフォルト全員選択) -->
+                <div class="bg-white border text-xs rounded-lg p-2 space-y-1">
                   <div class="flex items-center justify-between">
-                    <label class="text-[10px] font-bold text-slate-500">担当メンバー</label>
-                    <button type="button" onclick="document.getElementById('input-member-${dIdx}').value='全員'" class="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-bold">全員ボタン</button>
+                    <span class="text-[10px] font-bold text-slate-500">参加メンバー</span>
+                    <button type="button" onclick="selectAllInlineMembers(${dIdx})" class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-0.5 rounded">全員</button>
                   </div>
-                  <select id="input-member-${dIdx}" class="w-full border text-xs rounded-lg p-1.5 bg-white font-bold">
-                    <option value="全員" selected>全員</option>
-                    ${groupMembers.map(m => `<option value="${m}">${m}</option>`).join('')}
-                  </select>
+                  <div class="flex flex-wrap gap-2 pt-0.5">
+                    ${groupMembers.map((m, mIdx) => `
+                      <label class="flex items-center gap-1 cursor-pointer text-[11px]">
+                        <input type="checkbox" name="inline-member-${dIdx}" value="${m}" checked class="rounded text-blue-600">
+                        <span>${m}</span>
+                      </label>
+                    `).join('')}
+                  </div>
                 </div>
 
-                <button onclick="addSpotInline('${shiori.id}', ${dIdx})" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl text-xs shadow">追加する</button>
+                <button onclick="addSpotInline('${shiori.id}', ${dIdx})" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl text-xs">追加する</button>
               </div>
             </div>
           `;
@@ -484,42 +495,48 @@ function renderDetailScreen() {
     </div>
 
     ${showAllScheduleModal ? renderAllScheduleModal(shiori) : ''}
-    ${editingSpotInfo !== null ? renderEditSpotModal(shiori) : ''}
-    ${editingDayIdx !== null ? renderDayEditModal(shiori) : ''}
+    ${editingSpotIdx !== null ? renderEditSpotModal(shiori) : ''}
+    ${editingDayIdx !== null ? renderEditDayModal(shiori) : ''}
   `;
 }
 
-// 4. Day編集モーダル (タイトル変更、メモ、削除)
-function openDayEditModal(dIdx) {
-  editingDayIdx = dIdx;
-  renderApp();
+function selectAllInlineMembers(dIdx) {
+  const checkboxes = document.querySelectorAll(`input[name="inline-member-${dIdx}"]`);
+  checkboxes.forEach(cb => cb.checked = true);
 }
 
-function renderDayEditModal(shiori) {
+function selectAllEditMembers() {
+  const checkboxes = document.querySelectorAll(`input[name="edit-spot-member"]`);
+  checkboxes.forEach(cb => cb.checked = true);
+}
+
+// 4. Day編集モーダル (タイトル変更、メモ欄、Day削除)
+function renderEditDayModal(shiori) {
   const day = shiori.days[editingDayIdx];
+  const dateStr = getFormattedDayDate(shiori.startDate, editingDayIdx);
+
   return `
     <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+      <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl text-slate-800">
         <div class="flex justify-between border-b pb-2">
-          <h3 class="font-bold text-sm">Day ${editingDayIdx + 1} の編集</h3>
+          <h3 class="font-bold text-sm">Day ${day.dayNum || editingDayIdx + 1}${dateStr ? ` (${dateStr})` : ''} の編集</h3>
           <button onclick="editingDayIdx = null; renderApp();" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
         </div>
 
         <div class="space-y-3">
           <div>
-            <label class="text-[10px] font-bold text-slate-500">タイトル変更</label>
-            <input type="text" id="edit-day-title" value="${day.title || ('Day ' + (editingDayIdx + 1))}" class="w-full border text-xs rounded p-2">
+            <label class="text-[10px] font-bold text-slate-500">Day タイトル</label>
+            <input type="text" id="edit-day-title" value="${day.title || `Day ${day.dayNum || editingDayIdx + 1}`}" class="w-full border text-xs rounded p-2">
           </div>
-
           <div>
-            <label class="text-[10px] font-bold text-slate-500">メモ欄</label>
-            <textarea id="edit-day-memo" rows="2" class="w-full border text-xs rounded p-2" placeholder="この日の注意事項など">${day.memo || ''}</textarea>
+            <label class="text-[10px] font-bold text-slate-500">Day メモ</label>
+            <textarea id="edit-day-memo" rows="3" placeholder="この日の概要やメモ" class="w-full border text-xs rounded p-2">${day.memo || ''}</textarea>
           </div>
         </div>
 
         <div class="space-y-2 pt-2 border-t">
           <button onclick="saveDayEdit('${shiori.id}')" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl text-xs">変更を保存</button>
-          <button onclick="deleteDay('${shiori.id}', ${editingDayIdx})" class="w-full bg-red-50 text-red-600 font-bold py-2 rounded-xl text-xs border border-red-200"><i class="fa-solid fa-trash mr-1"></i> Day予定を削除</button>
+          <button onclick="deleteDay('${shiori.id}', ${editingDayIdx})" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-xl text-xs"><i class="fa-solid fa-trash"></i> このDayを削除</button>
         </div>
       </div>
     </div>
@@ -529,44 +546,45 @@ function renderDayEditModal(shiori) {
 function saveDayEdit(shioriId) {
   const shiori = localShioris.find(s => s.id === shioriId);
   const day = shiori.days[editingDayIdx];
-  day.title = document.getElementById('edit-day-title').value;
-  day.memo = document.getElementById('edit-day-memo').value;
+  
+  day.title = document.getElementById('edit-day-title').value.trim() || `Day ${day.dayNum || editingDayIdx + 1}`;
+  day.memo = document.getElementById('edit-day-memo').value.trim();
+
   editingDayIdx = null;
   saveAllToCloud();
   renderApp();
 }
 
 function deleteDay(shioriId, dIdx) {
-  if (confirm('このDayを削除しますか？登録されている予定も削除されます。')) {
+  if (confirm('このDayと配下の予定を削除してもよろしいですか？')) {
     const shiori = localShioris.find(s => s.id === shioriId);
     shiori.days.splice(dIdx, 1);
+    // 連番を再割り当て
+    shiori.days.forEach((d, idx) => {
+      d.dayNum = idx + 1;
+    });
     editingDayIdx = null;
-    currentDayIdx = 0;
+    currentDayIdx = Math.max(0, dIdx - 1);
     saveAllToCloud();
     renderApp();
   }
 }
 
-// 3. 予定編集モーダル (リンク欄・メンバー選択欄・全員ボタン)
-function openEditSpot(sId, dIdx, sIdx) {
-  editingSpotInfo = { dayIdx: dIdx, spotIdx: sIdx };
-  renderApp();
-}
-
+// 3. 予定編集モーダル（画像添付の下にリンク欄・メンバー選択欄追加）
 function renderEditSpotModal(shiori) {
-  const { dayIdx, spotIdx } = editingSpotInfo;
-  const spot = shiori.days[dayIdx].spots[spotIdx];
+  const spot = shiori.days[currentDayIdx].spots[editingSpotIdx];
   const [hh, mm] = spot.time.split(':');
 
-  const group = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
-  const groupMembers = group.members && group.members.length > 0 ? group.members : ['全員'];
+  const currentGroup = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
+  const groupMembers = currentGroup.members || [];
+  const selectedMembers = spot.members || groupMembers; // デフォルトは全員
 
   return `
     <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl">
+      <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-4 shadow-2xl text-slate-800">
         <div class="flex justify-between border-b pb-2">
           <h3 class="font-bold text-sm">予定の編集</h3>
-          <button onclick="editingSpotInfo = null; renderApp();" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+          <button onclick="editingSpotIdx = null; renderApp();" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
         </div>
 
         <div class="space-y-3">
@@ -583,13 +601,14 @@ function renderEditSpotModal(shiori) {
             <div class="flex items-center gap-0.5 bg-slate-50 px-2 py-1 border rounded-lg">
               <select id="edit-hour" class="time-picker-select text-xs">${Array.from({length:24}).map((_,h) => { const hs = String(h).padStart(2,'0'); return `<option value="${hs}" ${hs === hh ? 'selected' : ''}>${hs}</option>`; }).join('')}</select>
               <span>:</span>
-              <select id="edit-minute" class="time-picker-select text-xs">${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`; }).join('')}</select>
+              <select id="edit-minute" class="time-picker-select text-xs">${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}</select>
             </div>
             <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
           </div>
 
           <input type="text" id="edit-memo" value="${spot.memo || ''}" placeholder="メモ" class="w-full border text-xs rounded p-2">
           
+          <!-- 画像添付 -->
           <div class="w-full bg-slate-50 border text-xs rounded p-2 space-y-2">
              <div class="flex items-center justify-between">
                <span class="text-slate-500 font-medium text-[10px]">画像差替</span>
@@ -602,22 +621,26 @@ function renderEditSpotModal(shiori) {
              ` : ''}
           </div>
 
-          <!-- 3. 画像の下のリンク欄 -->
+          <!-- 3. 画像添付の下にリンク欄 -->
           <div>
             <label class="text-[10px] font-bold text-slate-500">関連リンク</label>
-            <input type="text" id="edit-link" value="${spot.link || ''}" placeholder="URL (http...)" class="w-full border text-xs rounded p-2">
+            <input type="url" id="edit-link" value="${spot.link || ''}" placeholder="https://..." class="w-full border text-xs rounded p-2">
           </div>
 
-          <!-- 3. 担当メンバー選択 (全員ボタンあり) -->
-          <div class="space-y-1">
+          <!-- 3. メンバー選択 (全員ボタンあり) -->
+          <div class="border text-xs rounded p-2 space-y-1 bg-slate-50">
             <div class="flex items-center justify-between">
-              <label class="text-[10px] font-bold text-slate-500">担当メンバー</label>
-              <button type="button" onclick="document.getElementById('edit-member').value='全員'" class="text-[10px] bg-slate-200 text-slate-700 px-2 py-0.5 rounded font-bold">全員ボタン</button>
+              <label class="text-[10px] font-bold text-slate-500">参加メンバー</label>
+              <button type="button" onclick="selectAllEditMembers()" class="text-[10px] bg-slate-200 hover:bg-slate-300 font-bold px-2 py-0.5 rounded">全員</button>
             </div>
-            <select id="edit-member" class="w-full border text-xs rounded p-2 font-bold">
-              <option value="全員" ${spot.assignedMember==='全員'?'selected':''}>全員</option>
-              ${groupMembers.map(m => `<option value="${m}" ${spot.assignedMember===m?'selected':''}>${m}</option>`).join('')}
-            </select>
+            <div class="flex flex-wrap gap-2 pt-1">
+              ${groupMembers.map((m) => `
+                <label class="flex items-center gap-1 cursor-pointer text-[11px]">
+                  <input type="checkbox" name="edit-spot-member" value="${m}" ${selectedMembers.includes(m) ? 'checked' : ''} class="rounded text-blue-600">
+                  <span>${m}</span>
+                </label>
+              `).join('')}
+            </div>
           </div>
         </div>
 
@@ -629,17 +652,108 @@ function renderEditSpotModal(shiori) {
   `;
 }
 
+function renderAllScheduleModal(shiori) {
+  return `
+    <div class="fixed inset-0 z-50 bg-black/80 flex flex-col justify-end">
+      <div class="bg-white rounded-t-3xl h-[85vh] p-4 flex flex-col">
+        <div class="flex justify-between items-center border-b pb-2 mb-3">
+          <h3 class="font-bold text-sm">全日程スケジュール</h3>
+          <button onclick="showAllScheduleModal=false;renderApp();" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+        <div class="flex gap-3 overflow-x-auto flex-1 items-start bg-slate-100 p-3 rounded-2xl">
+          ${shiori.days.map((day, idx) => {
+            const dateStr = getFormattedDayDate(shiori.startDate, idx);
+            const displayTitle = day.title || `Day ${day.dayNum || idx + 1}`;
+            return `
+              <div class="min-w-[240px] max-w-[240px] bg-white rounded-xl p-3 border shadow-sm space-y-2 max-h-full overflow-y-auto">
+                <span class="font-bold text-xs text-blue-600">${displayTitle}${dateStr ? ` (${dateStr})` : ''}</span>
+                <div class="space-y-2">
+                  ${day.spots.map(s => `
+                    <div class="bg-slate-50 p-2 rounded text-xs">
+                      <span class="font-bold text-blue-600 text-[10px]">${s.time}</span> ${s.icon}
+                      <div class="font-bold">${s.title}</div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function authAndSwitchGroup(gId) {
+  const inputPass = document.getElementById('pass-' + gId).value;
+  if (localGroups[gId].pass === inputPass) {
+    currentGroupId = gId; localStorage.setItem('tpocket_group_id', gId); navigateTo('home');
+  } else { alert('パスワードが正しくありません'); }
+}
+
+function authAndEditGroup(gId) {
+  const pass = prompt('編集用パスワードを入力してください:');
+  if (pass === null) return;
+  if (localGroups[gId].pass === pass) {
+    editingGroupId = gId; renderApp();
+  } else { alert('パスワードが違います'); }
+}
+
+function saveEditedGroup(gId) {
+  const newName = document.getElementById('edit-g-name-' + gId).value;
+  const newPass = document.getElementById('edit-g-pass-' + gId).value;
+  if(!newName || !newPass) return alert('入力不足です');
+  localGroups[gId].name = newName; localGroups[gId].pass = newPass;
+  editingGroupId = null; saveAllToCloud(); renderApp();
+}
+
+function deleteGroup(gId) {
+  if(confirm('グループを削除しますか？')) {
+    delete localGroups[gId];
+    if(currentGroupId === gId) currentGroupId = Object.keys(localGroups)[0] || null;
+    editingGroupId = null; saveAllToCloud(); renderApp();
+  }
+}
+
+function createNewGroup() {
+  const name = document.getElementById('new-group-name').value;
+  const pass = document.getElementById('new-group-pass').value || '1234';
+  if (!name) return alert('入力してください');
+  const newGId = 'group-' + Date.now();
+  localGroups[newGId] = { name, pass, members: ['自分'] }; currentGroupId = newGId; localStorage.setItem('tpocket_group_id', newGId); saveAllToCloud(); navigateTo('home');
+}
+
+function createNewShiori() {
+  const newId = 'shiori-' + Date.now();
+  localShioris.push({
+    id: newId,
+    groupId: currentGroupId,
+    title: '新規旅行計画 🌴',
+    destination: '未定',
+    startDate: '2026-09-10',
+    headerImg: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
+    showPackingList: true,
+    packingList: [],
+    days: [{ dayNum: 1, title: 'Day 1', memo: '', spots: [] }]
+  });
+  saveAllToCloud(); navigateTo('detail', newId);
+}
+
+function openEditSpot(sId, dIdx, sIdx) { currentDayIdx = dIdx; editingSpotIdx = sIdx; renderApp(); }
+
 function saveEditSpot(shioriId) {
   const shiori = localShioris.find(s => s.id === shioriId);
-  const { dayIdx, spotIdx } = editingSpotInfo;
-  const spot = shiori.days[dayIdx].spots[spotIdx];
+  const spot = shiori.days[currentDayIdx].spots[editingSpotIdx];
   
   spot.icon = document.getElementById('edit-icon').value || '✈️';
   spot.time = document.getElementById('edit-hour').value + ':' + document.getElementById('edit-minute').value;
   spot.title = document.getElementById('edit-title').value || '無題';
   spot.memo = document.getElementById('edit-memo').value;
   spot.link = document.getElementById('edit-link').value;
-  spot.assignedMember = document.getElementById('edit-member').value || '全員';
+
+  // 選択されたメンバーを取得
+  const memberCheckboxes = document.querySelectorAll('input[name="edit-spot-member"]:checked');
+  spot.members = Array.from(memberCheckboxes).map(cb => cb.value);
 
   handleImageUpload('edit-img-file', (base64Img) => {
     if (document.getElementById('edit-img-delete') && document.getElementById('edit-img-delete').checked) {
@@ -647,10 +761,8 @@ function saveEditSpot(shioriId) {
     } else if (base64Img) {
       spot.imgUrl = base64Img;
     }
-    shiori.days[dayIdx].spots.sort((a,b) => a.time.localeCompare(b.time));
-    editingSpotInfo = null;
-    saveAllToCloud();
-    renderApp();
+    shiori.days[currentDayIdx].spots.sort((a,b) => a.time.localeCompare(b.time));
+    editingSpotIdx = null; saveAllToCloud(); renderApp();
   });
 }
 
@@ -663,18 +775,40 @@ function addSpotInline(shioriId, dIdx) {
   const memo = document.getElementById('input-memo-' + dIdx).value;
   const icon = document.getElementById('input-icon-' + dIdx).value || '✈️';
   const link = document.getElementById('input-link-' + dIdx).value;
-  const assignedMember = document.getElementById('input-member-' + dIdx).value || '全員';
+
+  // インラインで選択されたメンバーを取得
+  const memberCheckboxes = document.querySelectorAll(`input[name="inline-member-${dIdx}"]:checked`);
+  const members = Array.from(memberCheckboxes).map(cb => cb.value);
 
   handleImageUpload('input-img-file-' + dIdx, (base64Img) => {
     shiori.days[dIdx].spots.push({
       id: 'spot-' + Date.now(),
-      icon, time, title, memo, link, assignedMember,
+      icon,
+      time,
+      title,
+      memo,
+      link,
+      members,
       imgUrl: base64Img || ''
     });
     shiori.days[dIdx].spots.sort((a,b) => a.time.localeCompare(b.time));
-    saveAllToCloud();
-    renderApp();
+    saveAllToCloud(); renderApp();
   });
+}
+
+function deleteSpot(shioriId, dayIdx, spotIdx) {
+  localShioris.find(s => s.id === shioriId).days[dayIdx].spots.splice(spotIdx, 1); saveAllToCloud(); renderApp();
+}
+
+function updateStartDate(shioriId, val) {
+  localShioris.find(s => s.id === shioriId).startDate = val; saveAllToCloud(); renderApp();
+}
+
+function addDay(shioriId) {
+  const shiori = localShioris.find(s => s.id === shioriId);
+  const newDayNum = shiori.days.length + 1;
+  shiori.days.push({ dayNum: newDayNum, title: `Day ${newDayNum}`, memo: '', spots: [] });
+  saveAllToCloud(); renderApp();
 }
 
 function saveHeaderInfo(shioriId) {
@@ -732,7 +866,7 @@ function setupSnapScrollListener() {
     container.addEventListener('scroll', () => {
       const cardWidth = container.firstElementChild ? container.firstElementChild.offsetWidth : 300;
       const newIdx = Math.round(container.scrollLeft / cardWidth);
-      if (newIdx !== currentDayIdx && newIdx >= 0) {
+      if (newIdx !== currentDayIdx && newIdx >= 0 && newIdx < container.children.length) {
         currentDayIdx = newIdx;
       }
     });
@@ -748,103 +882,4 @@ function scrollToDay(idx) {
       container.children[idx].scrollIntoView({ behavior: 'smooth', inline: 'center' });
     }
   }, 50);
-}
-
-function renderAllScheduleModal(shiori) {
-  return `
-    <div class="fixed inset-0 z-50 bg-black/80 flex flex-col justify-end">
-      <div class="bg-white rounded-t-3xl h-[85vh] p-4 flex flex-col">
-        <div class="flex justify-between items-center border-b pb-2 mb-3">
-          <h3 class="font-bold text-sm">全日程スケジュール</h3>
-          <button onclick="showAllScheduleModal=false;renderApp();" class="text-slate-400"><i class="fa-solid fa-xmark"></i></button>
-        </div>
-        <div class="flex gap-3 overflow-x-auto flex-1 items-start bg-slate-100 p-3 rounded-2xl">
-          ${shiori.days.map((day, idx) => `
-            <div class="min-w-[240px] max-w-[240px] bg-white rounded-xl p-3 border shadow-sm space-y-2 max-h-full overflow-y-auto">
-              <span class="font-bold text-xs text-blue-600">${day.title || ('Day ' + (idx + 1))}</span>
-              <div class="space-y-2">
-                ${day.spots.map(s => `
-                  <div class="bg-slate-50 p-2 rounded text-xs">
-                    <span class="font-bold text-blue-600 text-[10px]">${s.time}</span> ${s.icon}
-                    <div class="font-bold">${s.title}</div>
-                    ${s.assignedMember ? `<div class="text-[9px] text-amber-700">👤 ${s.assignedMember}</div>` : ''}
-                  </div>
-                `).join('')}
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function authAndSwitchGroup(gId) {
-  const inputPass = document.getElementById('pass-' + gId).value;
-  if (localGroups[gId].pass === inputPass) {
-    currentGroupId = gId; localStorage.setItem('tpocket_group_id', gId); navigateTo('home');
-  } else { alert('パスワードが正しくありません'); }
-}
-
-function authAndEditGroup(gId) {
-  const pass = prompt('編集用パスワードを入力してください:');
-  if (pass === null) return;
-  if (localGroups[gId].pass === pass) {
-    editingGroupId = gId; renderApp();
-  } else { alert('パスワードが違います'); }
-}
-
-function saveEditedGroup(gId) {
-  const newName = document.getElementById('edit-g-name-' + gId).value;
-  const newPass = document.getElementById('edit-g-pass-' + gId).value;
-  if(!newName || !newPass) return alert('入力不足です');
-  localGroups[gId].name = newName; localGroups[gId].pass = newPass;
-  editingGroupId = null; saveAllToCloud(); renderApp();
-}
-
-function deleteGroup(gId) {
-  if(confirm('グループを削除しますか？')) {
-    delete localGroups[gId];
-    if(currentGroupId === gId) currentGroupId = Object.keys(localGroups)[0] || null;
-    editingGroupId = null; saveAllToCloud(); renderApp();
-  }
-}
-
-function createNewGroup() {
-  const name = document.getElementById('new-group-name').value;
-  const pass = document.getElementById('new-group-pass').value || '1234';
-  if (!name) return alert('入力してください');
-  const newGId = 'group-' + Date.now();
-  localGroups[newGId] = { name, pass, members: ['自分', 'パートナー'] }; currentGroupId = newGId; localStorage.setItem('tpocket_group_id', newGId); saveAllToCloud(); navigateTo('home');
-}
-
-function createNewShiori() {
-  const newId = 'shiori-' + Date.now();
-  localShioris.push({
-    id: newId,
-    groupId: currentGroupId,
-    title: '新規旅行計画 🌴',
-    destination: '未定',
-    startDate: '2026-09-10',
-    headerImg: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
-    showPackingList: true,
-    packingList: [],
-    days: [{ dayNum: 1, title: 'Day 1', memo: '', spots: [] }]
-  });
-  saveAllToCloud(); navigateTo('detail', newId);
-}
-
-function deleteSpot(shioriId, dayIdx, spotIdx) {
-  localShioris.find(s => s.id === shioriId).days[dayIdx].spots.splice(spotIdx, 1); saveAllToCloud(); renderApp();
-}
-
-function updateStartDate(shioriId, val) {
-  localShioris.find(s => s.id === shioriId).startDate = val; saveAllToCloud(); renderApp();
-}
-
-function addDay(shioriId) {
-  const shiori = localShioris.find(s => s.id === shioriId);
-  const nextNum = shiori.days.length + 1;
-  shiori.days.push({ dayNum: nextNum, title: 'Day ' + nextNum, memo: '', spots: [] });
-  saveAllToCloud(); renderApp();
 }
