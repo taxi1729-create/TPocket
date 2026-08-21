@@ -16,16 +16,16 @@ let currentShioriId = null;
 let currentDayIdx = 0;
 let localGroups = {};
 let localShioris = [];
-let packingTemplates = JSON.parse(localStorage.getItem('tpocket_packing_templates') || '[]'); // 3. 持ち物アセット用データ
+let packingTemplates = JSON.parse(localStorage.getItem('tpocket_packing_templates') || '[]');
 let editingSpotIdx = null;
 let editingGroupId = null;
 let editingHeader = false;
 let editingDayIdx = null;
-let showAssetModal = false; // 3. アセット管理モーダル状態
+let showAssetModal = false;
 
 let isAdmin = false;
 
-const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '温泉', '🎟️'];
+const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '🎳', '⛪️'];
 
 db.ref('appData').on('value', (snapshot) => {
   const data = snapshot.val();
@@ -109,7 +109,7 @@ function renderApp() {
   } else if (currentView === 'groupAuth') {
     container.innerHTML = renderGroupAuthScreen();
   }
-  setupPullToRefresh(); // 2. 下フリックによるページ更新の設定
+  setupPullToRefresh();
 }
 
 window.selectIcon = function(val, btnEl, targetId, containerId) {
@@ -166,7 +166,6 @@ function renderHomeScreen() {
   const hasAccounting = Boolean(currentGroup.accountingUrl && currentGroup.accountingUrl.trim() !== '');
 
   return `
-    <!-- 2. 下に引っ張って更新用のローディングインジケーター -->
     <div id="pull-refresh-indicator" class="fixed top-0 left-0 right-0 z-50 flex items-center justify-center pointer-events-none transition-all duration-200 -translate-y-full opacity-0 py-3">
       <div class="bg-slate-900/90 text-white px-4 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 backdrop-blur-md">
         <i id="pull-refresh-icon" class="fa-solid fa-arrow-down transition-transform duration-200"></i>
@@ -321,7 +320,6 @@ function renderDetailScreen() {
   const hasAccounting = Boolean(currentGroup.accountingUrl && currentGroup.accountingUrl.trim() !== '');
 
   return `
-    <!-- 1. Day追加時のポップアップエフェクト -->
     <div id="day-added-toast" class="fixed inset-0 z-50 pointer-events-none flex items-center justify-center opacity-0 transition-all duration-300 transform scale-50">
       <div class="bg-slate-900/90 text-white px-6 py-4 rounded-2xl shadow-2xl backdrop-blur-md border border-white/20 flex flex-col items-center gap-2">
         <div class="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center text-blue-400 text-2xl animate-bounce">
@@ -331,7 +329,6 @@ function renderDetailScreen() {
       </div>
     </div>
 
-    <!-- 2. 下に引っ張って更新用のインジケーター -->
     <div id="pull-refresh-indicator" class="fixed top-0 left-0 right-0 z-50 flex items-center justify-center pointer-events-none transition-all duration-200 -translate-y-full opacity-0 py-3">
       <div class="bg-slate-900/90 text-white px-4 py-2 rounded-full text-xs font-bold shadow-xl flex items-center gap-2 backdrop-blur-md">
         <i id="pull-refresh-icon" class="fa-solid fa-arrow-down transition-transform duration-200"></i>
@@ -379,7 +376,6 @@ function renderDetailScreen() {
             <i class="fa-solid ${shiori.showPackingList ? 'fa-chevron-up' : 'fa-chevron-down'} text-[10px] text-slate-400"></i>
           </button>
           
-          <!-- 3. アセット呼出・管理ボタン -->
           <div class="flex gap-1.5">
             <button onclick="showAssetModal = true; renderApp();" class="text-[10px] bg-indigo-50 text-indigo-600 border border-indigo-200 font-bold px-2 py-1 rounded-lg flex items-center gap-1">
               <i class="fa-solid fa-boxes-packing"></i> アセット管理
@@ -440,7 +436,7 @@ function renderDetailScreen() {
       </div>
 
       <div class="text-center py-2 bg-slate-100 border-b text-[11px] text-slate-500 font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 (右端で0.5秒フリックでDay追加) 👉
+        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 (右端で0.2秒フリックでDay追加) 👉
       </div>
 
       <!-- 横フリックエリア -->
@@ -557,7 +553,6 @@ function renderDetailScreen() {
   `;
 }
 
-// 3. 持ち物アセット（テンプレート）管理モーダル
 function renderPackingAssetModal(shiori) {
   return `
     <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -568,7 +563,6 @@ function renderPackingAssetModal(shiori) {
         </div>
 
         <div class="flex-1 overflow-y-auto space-y-4 pr-1">
-          <!-- アセット登録フォーム -->
           <div class="bg-indigo-50/60 border border-indigo-100 p-3 rounded-xl space-y-2">
             <span class="text-[11px] font-bold text-indigo-900 block">新しいアセットを作成</span>
             <input type="text" id="asset-title-input" placeholder="アセット名 (例: 国内1泊基本セット)" class="w-full border text-xs rounded p-2 bg-white">
@@ -576,7 +570,6 @@ function renderPackingAssetModal(shiori) {
             <button onclick="saveNewPackingAsset()" class="w-full bg-indigo-600 text-white text-xs font-bold py-2 rounded-lg">保存する</button>
           </div>
 
-          <!-- 登録済みアセット一覧 -->
           <div class="space-y-2">
             <span class="text-xs font-bold text-slate-600 block">保存済みアセット (${packingTemplates.length})</span>
             ${packingTemplates.length === 0 ? '<div class="text-[11px] text-slate-400 italic">保存されたアセットはありません</div>' : ''}
@@ -676,16 +669,25 @@ function triggerDayAddedEffect() {
   }, 1200);
 }
 
+// 1. 追加時に自動で右端（一番最後のDay）へ移動 & 上部タブ青色更新（要件1）
 function addDay(shioriId) {
   const shiori = localShioris.find(s => s.id === shioriId);
   const newDayNum = shiori.days.length + 1;
   shiori.days.push({ dayNum: newDayNum, title: `Day ${newDayNum}`, memo: '', spots: [] });
   saveAllToCloud(); 
+  
+  // 最後のDayをアクティブに設定
+  currentDayIdx = shiori.days.length - 1;
+  
   renderApp();
-  triggerDayAddedEffect(); // 1. 追加時のエフェクトを表示
+  triggerDayAddedEffect();
+
+  // 自動で右端のDayまでスムーズスクロール
+  setTimeout(() => {
+    scrollToDay(currentDayIdx);
+  }, 50);
 }
 
-// 2. 引っ張って更新 (Pull to Refresh) の実装
 let pullStartY = 0;
 let pullMoveY = 0;
 let isPulling = false;
@@ -751,7 +753,6 @@ function setupPullToRefresh() {
   window.addEventListener('touchend', handleTouchEnd, { passive: true });
 }
 
-// 1. スワイプ判定 (0.5秒 = 500ms)
 let holdTimer = null;
 let touchStartX = 0;
 
@@ -768,6 +769,7 @@ function updateActiveDayTabUI(newIdx) {
   });
 }
 
+// 1. スワイプ判定を0.2秒 (200ms) に更新（要件1）
 function setupSnapScrollListener() {
   setTimeout(() => {
     const container = document.getElementById('snap-scroll-container');
@@ -793,13 +795,13 @@ function setupSnapScrollListener() {
       const maxScrollLeft = container.scrollWidth - container.clientWidth;
       const isAtEnd = container.scrollLeft >= maxScrollLeft - 10;
 
-      // 1. 右端フリック判定時間を 0.5秒 (500ms) に設定
+      // フリック判定を 0.2秒 (200ms) に設定
       if (isAtEnd && diffX > 30) {
         if (!holdTimer) {
           holdTimer = setTimeout(() => {
             addDay(currentShioriId);
             holdTimer = null;
-          }, 500); 
+          }, 200); 
         }
       } else {
         if (holdTimer) {
@@ -1093,9 +1095,11 @@ function selectAllEditMembers() {
   checkboxes.forEach(cb => cb.checked = true);
 }
 
+// 3. Dayが1つの場合は削除不可にするガード UI（要件3）
 function renderEditDayModal(shiori) {
   const day = shiori.days[editingDayIdx];
   const dateStr = getFormattedDayDate(shiori.startDate, editingDayIdx);
+  const isOnlyOneDay = shiori.days.length <= 1;
 
   return `
     <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1118,7 +1122,9 @@ function renderEditDayModal(shiori) {
 
         <div class="space-y-2 pt-2 border-t">
           <button onclick="saveDayEdit('${shiori.id}')" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl text-xs">変更を保存</button>
-          <button onclick="deleteDay('${shiori.id}', ${editingDayIdx})" class="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-2 rounded-xl text-xs"><i class="fa-solid fa-trash"></i> このDayを削除</button>
+          <button onclick="deleteDay('${shiori.id}', ${editingDayIdx})" ${isOnlyOneDay ? 'disabled' : ''} class="w-full ${isOnlyOneDay ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600 text-white'} font-bold py-2 rounded-xl text-xs flex items-center justify-center gap-1">
+            <i class="fa-solid fa-trash"></i> ${isOnlyOneDay ? 'Dayは1つ以上必要です' : 'このDayを削除'}
+          </button>
         </div>
       </div>
     </div>
@@ -1137,13 +1143,29 @@ function saveDayEdit(shioriId) {
   renderApp();
 }
 
+// 2 & 3. 削除処理・連番自動更新・1つ以下防止のガード（要件2, 3）
 function deleteDay(shioriId, dIdx) {
+  const shiori = localShioris.find(s => s.id === shioriId);
+  
+  // 要件3: Day個数が1の時、削除不可
+  if (!shiori || shiori.days.length <= 1) {
+    alert('Dayは最低1つ残す必要があります');
+    return;
+  }
+
   if (confirm('このDayと配下の予定を削除してもよろしいですか？')) {
-    const shiori = localShioris.find(s => s.id === shioriId);
     shiori.days.splice(dIdx, 1);
+    
+    // 要件2: Day番号とデフォルトタイトル（Day X）の更新
     shiori.days.forEach((d, idx) => {
+      const oldDefaultTitle = `Day ${d.dayNum || idx + 2}`;
       d.dayNum = idx + 1;
+      // タイトルが未設定またはデフォルト名だった場合に繰り上げて「Day X」を自動設定
+      if (!d.title || d.title === oldDefaultTitle || /^Day\s+\d+$/i.test(d.title)) {
+        d.title = `Day ${d.dayNum}`;
+      }
     });
+
     editingDayIdx = null;
     currentDayIdx = Math.max(0, dIdx - 1);
     saveAllToCloud();
