@@ -17,15 +17,17 @@ let showAllScheduleModal = false;
 let editingSpotIdx = null;
 let editingGroupId = null;
 let editingHeader = false;
-let editingDayIdx = null; // Day編集用モーダル管理
+let editingDayIdx = null;
 
-const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '♨️', '🎟️'];
+// 管理者機能状態
+let isAdmin = false;
+
+const defaultIcons = ['✈️', '🏨', '🍽️', '☕', '🚗', '📸', '🛍️', '🏖️', '温泉', '🎟️'];
 
 db.ref('appData').on('value', (snapshot) => {
   const data = snapshot.val();
   if (data) {
     localGroups = data.groups || {};
-    // グループ初期化時のメンバー補完
     Object.keys(localGroups).forEach(gId => {
       if (!localGroups[gId].members) {
         localGroups[gId].members = ['自分', 'メンバーA'];
@@ -86,7 +88,6 @@ function navigateTo(view, id = null) {
   window.scrollTo(0, 0);
 }
 
-// 日付フォーマットヘルパー関数 (YYYY-MM-DD + addDays -> M/D)
 function getFormattedDayDate(startDateStr, dayIdx) {
   if (!startDateStr) return '';
   const date = new Date(startDateStr);
@@ -129,7 +130,7 @@ function handleImageUpload(inputId, callback) {
   reader.readAsDataURL(el.files[0]);
 }
 
-// 2. 旅行一覧画面でメンバー編集機能の追加
+// 4. 旅行一覧画面（マイポケット）＆削除ボタンの追加
 function renderHomeScreen() {
   const currentGroup = localGroups[currentGroupId] || { name: '未選択', members: [] };
   const groupShioris = localShioris.filter(s => s.groupId === currentGroupId);
@@ -173,8 +174,8 @@ function renderHomeScreen() {
       </div>
       <div class="space-y-4">
         ${groupShioris.map(s => `
-          <div onclick="navigateTo('detail', '${s.id}')" class="bg-white border rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-all">
-            <div class="h-32 bg-slate-100 relative">
+          <div class="bg-white border rounded-2xl overflow-hidden shadow-sm relative group">
+            <div onclick="navigateTo('detail', '${s.id}')" class="h-32 bg-slate-100 relative cursor-pointer">
               <img src="${s.headerImg || 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80'}" class="w-full h-full object-cover">
               <div class="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent"></div>
               <div class="absolute bottom-3 left-3 text-white">
@@ -182,11 +183,23 @@ function renderHomeScreen() {
                 <h3 class="font-bold text-base mt-1">${s.title}</h3>
               </div>
             </div>
+            <!-- 4. 旅行予定削除ボタン -->
+            <button onclick="deleteShiori('${s.id}')" class="absolute top-2.5 right-2.5 bg-black/50 hover:bg-red-600 text-white w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm transition-all shadow">
+              <i class="fa-solid fa-trash text-xs"></i>
+            </button>
           </div>
         `).join('')}
       </div>
     </div>
   `;
+}
+
+function deleteShiori(shioriId) {
+  if (confirm('この旅行しおりを削除しますか？')) {
+    localShioris = localShioris.filter(s => s.id !== shioriId);
+    saveAllToCloud();
+    renderApp();
+  }
 }
 
 function addGroupMember(gId) {
@@ -206,14 +219,19 @@ function deleteGroupMember(gId, idx) {
   }
 }
 
+// 5. 設定画面に「管理者」ボタンの追加とパスワード可視化
 function renderGroupAuthScreen() {
   return `
     <div class="p-5 space-y-6">
       <div class="flex items-center justify-between border-b pb-3">
         <button onclick="navigateTo('home')" class="text-xs font-bold text-blue-600"><i class="fa-solid fa-arrow-left"></i> 戻る</button>
         <h2 class="font-bold text-base">グループ管理</h2>
-        <div></div>
+        <!-- 管理者ボタン -->
+        <button onclick="toggleAdminAuth()" class="text-xs ${isAdmin ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-700'} font-bold px-3 py-1.5 rounded-lg flex items-center gap-1">
+          <i class="fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}"></i> ${isAdmin ? '管理者ON' : '管理者'}
+        </button>
       </div>
+
       <div class="space-y-3">
         ${Object.keys(localGroups).map(gId => {
           const g = localGroups[gId];
@@ -221,7 +239,11 @@ function renderGroupAuthScreen() {
           return `
             <div class="bg-white border rounded-2xl p-4 flex flex-col gap-2 ${isCurrent ? 'border-blue-500 ring-2 ring-blue-100' : ''}">
               <div class="flex items-center justify-between">
-                <span class="font-bold text-sm">${g.name} ${isCurrent ? '<span class="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full ml-2">選択中</span>' : ''}</span>
+                <div>
+                  <span class="font-bold text-sm">${g.name} ${isCurrent ? '<span class="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full ml-1">選択中</span>' : ''}</span>
+                  <!-- 管理者認証済みの場合パスワード可視化 -->
+                  ${isAdmin ? `<div class="text-[11px] font-mono text-amber-600 font-bold mt-0.5"><i class="fa-solid fa-key text-[10px]"></i> PW: ${g.pass}</div>` : ''}
+                </div>
                 <button onclick="authAndEditGroup('${gId}')" class="text-[10px] text-slate-500 bg-slate-100 px-2 py-1 rounded">編集</button>
               </div>
               ${editingGroupId === gId ? `
@@ -229,7 +251,7 @@ function renderGroupAuthScreen() {
                   <label class="text-[10px] font-bold text-slate-500">名称変更</label>
                   <input type="text" id="edit-g-name-${gId}" value="${g.name}" class="w-full border text-xs rounded p-2">
                   <label class="text-[10px] font-bold text-slate-500">パスワード変更</label>
-                  <input type="password" id="edit-g-pass-${gId}" value="${g.pass}" class="w-full border text-xs rounded p-2">
+                  <input type="${isAdmin ? 'text' : 'password'}" id="edit-g-pass-${gId}" value="${g.pass}" class="w-full border text-xs rounded p-2">
                   <div class="flex gap-2 pt-2">
                     <button onclick="saveEditedGroup('${gId}')" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg text-xs">保存</button>
                     <button onclick="deleteGroup('${gId}')" class="flex-1 bg-red-500 text-white font-bold py-2 rounded-lg text-xs">削除</button>
@@ -248,6 +270,7 @@ function renderGroupAuthScreen() {
           `;
         }).join('')}
       </div>
+
       <div class="bg-slate-50 border rounded-2xl p-4 space-y-3">
         <h3 class="text-xs font-bold"><i class="fa-solid fa-plus-circle text-blue-600"></i> 新規作成</h3>
         <input type="text" id="new-group-name" placeholder="グループ名" class="w-full border text-xs rounded-lg p-2.5">
@@ -256,6 +279,22 @@ function renderGroupAuthScreen() {
       </div>
     </div>
   `;
+}
+
+// 5. 管理者認証トグル (パスワード: 750651)
+function toggleAdminAuth() {
+  if (isAdmin) {
+    isAdmin = false;
+    renderApp();
+  } else {
+    const inputPass = prompt('管理者パスワードを入力してください:');
+    if (inputPass === '750651') {
+      isAdmin = true;
+      renderApp();
+    } else if (inputPass !== null) {
+      alert('管理者パスワードが正しくありません');
+    }
+  }
 }
 
 function renderDetailScreen() {
@@ -270,8 +309,8 @@ function renderDetailScreen() {
 
   return `
     <div class="relative bg-slate-50 min-h-screen flex flex-col">
-      <!-- 1. 一番上の黒フレーム（固定表示） -->
-      <div class="sticky top-0 z-30 bg-slate-900 text-white p-3 px-4 flex justify-between items-center shadow-md">
+      <!-- 2. 黒い枠の固定化（sticky top-0 z-50 でスクロールしても上部固定） -->
+      <div class="sticky top-0 z-50 bg-slate-900 text-white p-3 px-4 flex justify-between items-center shadow-md">
         <button onclick="navigateTo('home')" class="text-xs font-bold flex items-center gap-1.5 hover:text-blue-400"><i class="fa-solid fa-arrow-left"></i> 旅行一覧</button>
         <span class="text-xs font-black truncate max-w-[160px] text-center">${shiori.title}</span>
         <button onclick="showAllScheduleModal = true; renderApp();" class="text-xs bg-blue-600 px-3 py-1.5 rounded-lg font-bold">全一覧</button>
@@ -293,7 +332,7 @@ function renderDetailScreen() {
         </div>
       </div>
 
-      <!-- ヘッダー情報編集モーダル -->
+      <!-- ヘッダー編集モーダル -->
       ${editingHeader ? `
         <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div class="bg-white rounded-2xl w-full max-w-sm p-5 space-y-3 text-slate-800 shadow-2xl">
@@ -312,7 +351,7 @@ function renderDetailScreen() {
         </div>
       ` : ''}
 
-      <!-- 持ち物一覧エリア -->
+      <!-- 持ち物リスト -->
       <div class="bg-white p-4 border-b space-y-3">
         <div class="flex items-center justify-between">
           <button onclick="togglePackingList('${shiori.id}')" class="font-bold text-xs text-slate-800 flex items-center gap-1.5">
@@ -362,7 +401,6 @@ function renderDetailScreen() {
           <button onclick="addDay('${shiori.id}')" class="text-xs bg-blue-50 text-blue-600 px-2.5 py-1 rounded-lg font-bold border border-blue-200">+ Day追加</button>
         </div>
 
-        <!-- Day タブ -->
         <div class="flex gap-2 overflow-x-auto hide-scrollbar pt-1">
           ${shiori.days.map((d, idx) => {
             const dateStr = getFormattedDayDate(shiori.startDate, idx);
@@ -376,9 +414,9 @@ function renderDetailScreen() {
         </div>
       </div>
 
-      <!-- 5. スワイプ指示表示 (開始日・Dayタブの下に1つだけ配置) -->
+      <!-- スワイプ案内 -->
       <div class="text-center py-2 bg-slate-100 border-b text-[11px] text-slate-500 font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 👉
+        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 （端で2秒長押しフリックでDay追加） 👉
       </div>
 
       <!-- シームレス横フリック (CSS Scroll Snap) -->
@@ -390,7 +428,6 @@ function renderDetailScreen() {
           return `
             <div class="snap-center shrink-0 w-[88vw] max-w-[370px] bg-slate-100/70 border rounded-3xl p-4 space-y-4 shadow-sm flex flex-col justify-between">
               <div>
-                <!-- 4. Dayタイトルの横に編集ボタンを追加、日付フォーマット表記 -->
                 <div class="flex items-center justify-between border-b pb-2 mb-2">
                   <div>
                     <span class="font-black text-slate-800 text-sm">${displayTitle}${dateStr ? ` (${dateStr})` : ''}</span>
@@ -421,14 +458,12 @@ function renderDetailScreen() {
                         <h3 class="font-bold text-sm text-slate-800">${spot.title}</h3>
                         ${spot.memo ? `<p class="text-xs text-slate-500 bg-slate-50 p-2 rounded-lg">${spot.memo}</p>` : ''}
                         
-                        <!-- 担当メンバー表示 -->
                         ${selectedMembers.length > 0 ? `
                           <div class="flex flex-wrap gap-1 pt-1">
                             ${selectedMembers.map(m => `<span class="text-[9px] bg-indigo-50 text-indigo-600 font-bold px-1.5 py-0.5 rounded"><i class="fa-solid fa-user text-[8px]"></i> ${m}</span>`).join('')}
                           </div>
                         ` : ''}
 
-                        <!-- 関連リンク表示 -->
                         ${spot.link ? `
                           <div class="pt-0.5">
                             <a href="${spot.link}" target="_blank" class="text-blue-600 text-[11px] font-bold inline-flex items-center gap-1 hover:underline">
@@ -444,7 +479,7 @@ function renderDetailScreen() {
                 </div>
               </div>
 
-              <!-- 3. スポット追加インラインフォーム（画像の下にリンク・メンバー選択追加） -->
+              <!-- 1. 予定追加フォーム & 修正された追加ボタン -->
               <div class="bg-blue-50/80 border border-blue-200 rounded-2xl p-3 space-y-2.5 mt-4">
                 <h4 class="text-[11px] font-bold text-blue-900"><i class="fa-solid fa-plus-circle text-blue-600"></i> ${displayTitle} に予定を追加</h4>
                 <input type="hidden" id="input-icon-${dIdx}" value="✈️">
@@ -467,17 +502,15 @@ function renderDetailScreen() {
                    <input type="file" id="input-img-file-${dIdx}" accept="image/*" class="text-[9px]">
                 </div>
 
-                <!-- 3. 画像添付の下にリンク欄 -->
                 <input type="url" id="input-link-${dIdx}" placeholder="関連リンクURL (任意)" class="w-full border text-xs rounded-lg p-1.5 bg-white">
 
-                <!-- 3. メンバー選択 (デフォルト全員選択) -->
                 <div class="bg-white border text-xs rounded-lg p-2 space-y-1">
                   <div class="flex items-center justify-between">
                     <span class="text-[10px] font-bold text-slate-500">参加メンバー</span>
                     <button type="button" onclick="selectAllInlineMembers(${dIdx})" class="text-[10px] bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold px-2 py-0.5 rounded">全員</button>
                   </div>
                   <div class="flex flex-wrap gap-2 pt-0.5">
-                    ${groupMembers.map((m, mIdx) => `
+                    ${groupMembers.map((m) => `
                       <label class="flex items-center gap-1 cursor-pointer text-[11px]">
                         <input type="checkbox" name="inline-member-${dIdx}" value="${m}" checked class="rounded text-blue-600">
                         <span>${m}</span>
@@ -486,7 +519,8 @@ function renderDetailScreen() {
                   </div>
                 </div>
 
-                <button onclick="addSpotInline('${shiori.id}', ${dIdx})" class="w-full bg-blue-600 text-white font-bold py-2 rounded-xl text-xs">追加する</button>
+                <!-- 1. 追加ボタン (onclickイベント修正済み) -->
+                <button onclick="addSpotInline('${shiori.id}', ${dIdx})" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs shadow-sm">追加する</button>
               </div>
             </div>
           `;
@@ -510,7 +544,6 @@ function selectAllEditMembers() {
   checkboxes.forEach(cb => cb.checked = true);
 }
 
-// 4. Day編集モーダル (タイトル変更、メモ欄、Day削除)
 function renderEditDayModal(shiori) {
   const day = shiori.days[editingDayIdx];
   const dateStr = getFormattedDayDate(shiori.startDate, editingDayIdx);
@@ -559,7 +592,6 @@ function deleteDay(shioriId, dIdx) {
   if (confirm('このDayと配下の予定を削除してもよろしいですか？')) {
     const shiori = localShioris.find(s => s.id === shioriId);
     shiori.days.splice(dIdx, 1);
-    // 連番を再割り当て
     shiori.days.forEach((d, idx) => {
       d.dayNum = idx + 1;
     });
@@ -570,14 +602,13 @@ function deleteDay(shioriId, dIdx) {
   }
 }
 
-// 3. 予定編集モーダル（画像添付の下にリンク欄・メンバー選択欄追加）
 function renderEditSpotModal(shiori) {
   const spot = shiori.days[currentDayIdx].spots[editingSpotIdx];
   const [hh, mm] = spot.time.split(':');
 
   const currentGroup = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
   const groupMembers = currentGroup.members || [];
-  const selectedMembers = spot.members || groupMembers; // デフォルトは全員
+  const selectedMembers = spot.members || groupMembers;
 
   return `
     <div class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
@@ -598,17 +629,20 @@ function renderEditSpotModal(shiori) {
           </div>
 
           <div class="flex gap-2 items-center">
-            <div class="flex items-center gap-0.5 bg-slate-50 px-2 py-1 border rounded-lg">
-              <select id="edit-hour" class="time-picker-select text-xs">${Array.from({length:24}).map((_,h) => { const hs = String(h).padStart(2,'0'); return `<option value="${hs}" ${hs === hh ? 'selected' : ''}>${hs}</option>`; }).join('')}</select>
-              <span>:</span>
-              <select id="edit-minute" class="time-picker-select text-xs">${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}</select>
-            </div>
-            <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
+          <div class="flex items-center gap-0.5 bg-slate-50 px-2 py-1 border rounded-lg">
+           <select id="edit-hour" class="time-picker-select text-xs">
+              ${Array.from({length:24}).map((_,h) => { const hs = String(h).padStart(2,'0'); return `<option value="${hs}" ${hs === hh ? 'selected' : ''}>${hs}</option>`; }).join('')}
+            </select>
+            <span>:</span>
+            <select id="edit-minute" class="time-picker-select text-xs">
+              ${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}
+            </select>
           </div>
+          <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
+        </div>
 
           <input type="text" id="edit-memo" value="${spot.memo || ''}" placeholder="メモ" class="w-full border text-xs rounded p-2">
           
-          <!-- 画像添付 -->
           <div class="w-full bg-slate-50 border text-xs rounded p-2 space-y-2">
              <div class="flex items-center justify-between">
                <span class="text-slate-500 font-medium text-[10px]">画像差替</span>
@@ -621,13 +655,11 @@ function renderEditSpotModal(shiori) {
              ` : ''}
           </div>
 
-          <!-- 3. 画像添付の下にリンク欄 -->
           <div>
             <label class="text-[10px] font-bold text-slate-500">関連リンク</label>
             <input type="url" id="edit-link" value="${spot.link || ''}" placeholder="https://..." class="w-full border text-xs rounded p-2">
           </div>
 
-          <!-- 3. メンバー選択 (全員ボタンあり) -->
           <div class="border text-xs rounded p-2 space-y-1 bg-slate-50">
             <div class="flex items-center justify-between">
               <label class="text-[10px] font-bold text-slate-500">参加メンバー</label>
@@ -684,43 +716,70 @@ function renderAllScheduleModal(shiori) {
   `;
 }
 
+// --- 修正箇所（構文エラーの解消） ---
 function authAndSwitchGroup(gId) {
-  const inputPass = document.getElementById('pass-' + gId).value;
-  if (localGroups[gId].pass === inputPass) {
-    currentGroupId = gId; localStorage.setItem('tpocket_group_id', gId); navigateTo('home');
-  } else { alert('パスワードが正しくありません'); }
+  const inputEl = document.getElementById('pass-' + gId);
+  if (!inputEl) return;
+  const inputPass = inputEl.value;
+  if (localGroups[gId] && localGroups[gId].pass === inputPass) {
+    currentGroupId = gId;
+    localStorage.setItem('tpocket_group_id', gId);
+    navigateTo('home');
+  } else {
+    alert('パスワードが正しくありません');
+  }
 }
 
 function authAndEditGroup(gId) {
   const pass = prompt('編集用パスワードを入力してください:');
   if (pass === null) return;
-  if (localGroups[gId].pass === pass) {
-    editingGroupId = gId; renderApp();
-  } else { alert('パスワードが違います'); }
+  if (localGroups[gId] && localGroups[gId].pass === pass) {
+    editingGroupId = gId;
+    renderApp();
+  } else {
+    alert('パスワードが違います');
+  }
 }
 
 function saveEditedGroup(gId) {
-  const newName = document.getElementById('edit-g-name-' + gId).value;
-  const newPass = document.getElementById('edit-g-pass-' + gId).value;
-  if(!newName || !newPass) return alert('入力不足です');
-  localGroups[gId].name = newName; localGroups[gId].pass = newPass;
-  editingGroupId = null; saveAllToCloud(); renderApp();
+  const nameEl = document.getElementById('edit-g-name-' + gId);
+  const passEl = document.getElementById('edit-g-pass-' + gId);
+  if (!nameEl || !passEl) return;
+  const newName = nameEl.value;
+  const newPass = passEl.value;
+  if (!newName || !newPass) return alert('入力不足です');
+  localGroups[gId].name = newName;
+  localGroups[gId].pass = newPass;
+  editingGroupId = null;
+  saveAllToCloud();
+  renderApp();
 }
 
 function deleteGroup(gId) {
-  if(confirm('グループを削除しますか？')) {
+  if (confirm('グループを削除しますか？')) {
     delete localGroups[gId];
-    if(currentGroupId === gId) currentGroupId = Object.keys(localGroups)[0] || null;
-    editingGroupId = null; saveAllToCloud(); renderApp();
+    if (currentGroupId === gId) {
+      currentGroupId = Object.keys(localGroups)[0] || null;
+    }
+    editingGroupId = null;
+    saveAllToCloud();
+    renderApp();
   }
 }
 
 function createNewGroup() {
-  const name = document.getElementById('new-group-name').value;
-  const pass = document.getElementById('new-group-pass').value || '1234';
+  const nameEl = document.getElementById('new-group-name');
+  const passEl = document.getElementById('new-group-pass');
+  if (!nameEl) return;
+  const name = nameEl.value;
+  const pass = (passEl && passEl.value) ? passEl.value : '1234';
   if (!name) return alert('入力してください');
   const newGId = 'group-' + Date.now();
-  localGroups[newGId] = { name, pass, members: ['自分'] }; currentGroupId = newGId; localStorage.setItem('tpocket_group_id', newGId); saveAllToCloud(); navigateTo('home');
+  localGroups[newGId] = { name, pass, members: ['自分'] };
+  currentGroupId = newGId;
+  localStorage.setItem('tpocket_group_id', newGId);
+  saveAllToCloud();
+  navigateTo('home');
 }
 
 function createNewShiori() {
@@ -751,7 +810,6 @@ function saveEditSpot(shioriId) {
   spot.memo = document.getElementById('edit-memo').value;
   spot.link = document.getElementById('edit-link').value;
 
-  // 選択されたメンバーを取得
   const memberCheckboxes = document.querySelectorAll('input[name="edit-spot-member"]:checked');
   spot.members = Array.from(memberCheckboxes).map(cb => cb.value);
 
@@ -766,21 +824,31 @@ function saveEditSpot(shioriId) {
   });
 }
 
+// 1. 予定追加関数の修正 (エレメント値読み取りの不具合解消)
 function addSpotInline(shioriId, dIdx) {
-  const title = document.getElementById('input-title-' + dIdx).value;
-  if (!title) return alert('予定名を入力してください');
+  const titleEl = document.getElementById('input-title-' + dIdx);
+  if (!titleEl || !titleEl.value.trim()) return alert('予定名を入力してください');
   
   const shiori = localShioris.find(s => s.id === shioriId);
-  const time = document.getElementById('input-hour-' + dIdx).value + ':' + document.getElementById('input-minute-' + dIdx).value;
-  const memo = document.getElementById('input-memo-' + dIdx).value;
-  const icon = document.getElementById('input-icon-' + dIdx).value || '✈️';
-  const link = document.getElementById('input-link-' + dIdx).value;
+  if (!shiori) return;
 
-  // インラインで選択されたメンバーを取得
+  const title = titleEl.value.trim();
+  const hourEl = document.getElementById('input-hour-' + dIdx);
+  const minEl = document.getElementById('input-minute-' + dIdx);
+  const memoEl = document.getElementById('input-memo-' + dIdx);
+  const iconEl = document.getElementById('input-icon-' + dIdx);
+  const linkEl = document.getElementById('input-link-' + dIdx);
+
+  const time = (hourEl ? hourEl.value : '00') + ':' + (minEl ? minEl.value : '00');
+  const memo = memoEl ? memoEl.value : '';
+  const icon = iconEl ? iconEl.value : '✈️';
+  const link = linkEl ? linkEl.value : '';
+
   const memberCheckboxes = document.querySelectorAll(`input[name="inline-member-${dIdx}"]:checked`);
   const members = Array.from(memberCheckboxes).map(cb => cb.value);
 
   handleImageUpload('input-img-file-' + dIdx, (base64Img) => {
+    if (!shiori.days[dIdx].spots) shiori.days[dIdx].spots = [];
     shiori.days[dIdx].spots.push({
       id: 'spot-' + Date.now(),
       icon,
@@ -792,7 +860,8 @@ function addSpotInline(shioriId, dIdx) {
       imgUrl: base64Img || ''
     });
     shiori.days[dIdx].spots.sort((a,b) => a.time.localeCompare(b.time));
-    saveAllToCloud(); renderApp();
+    saveAllToCloud(); 
+    renderApp();
   });
 }
 
@@ -859,10 +928,15 @@ function deletePackingItem(shioriId, idx) {
   renderApp();
 }
 
+// 3. 最後のDayで右から左へスワイプし2秒維持で自動Day追加
+let holdTimer = null;
+let touchStartX = 0;
+
 function setupSnapScrollListener() {
   setTimeout(() => {
     const container = document.getElementById('snap-scroll-container');
     if (!container) return;
+
     container.addEventListener('scroll', () => {
       const cardWidth = container.firstElementChild ? container.firstElementChild.offsetWidth : 300;
       const newIdx = Math.round(container.scrollLeft / cardWidth);
@@ -870,6 +944,50 @@ function setupSnapScrollListener() {
         currentDayIdx = newIdx;
       }
     });
+
+    // 3. 長押しフリック（2秒ホールド）検出
+    const startTouch = (e) => {
+      touchStartX = e.touches ? e.touches[0].clientX : e.clientX;
+      if (holdTimer) clearTimeout(holdTimer);
+    };
+
+    const moveTouch = (e) => {
+      const currentX = e.touches ? e.touches[0].clientX : e.clientX;
+      const diffX = touchStartX - currentX; // 右から左への移動量
+
+      const maxScrollLeft = container.scrollWidth - container.clientWidth;
+      const isAtEnd = container.scrollLeft >= maxScrollLeft - 10;
+
+      // 最後のDayかつ右から左へフリック中(diffX > 30)
+      if (isAtEnd && diffX > 30) {
+        if (!holdTimer) {
+          holdTimer = setTimeout(() => {
+            addDay(currentShioriId);
+            alert('新しいDayを追加しました！');
+            holdTimer = null;
+          }, 2000); // 2秒間ホールド
+        }
+      } else {
+        if (holdTimer) {
+          clearTimeout(holdTimer);
+          holdTimer = null;
+        }
+      }
+    };
+
+    const endTouch = () => {
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+        holdTimer = null;
+      }
+    };
+
+    container.addEventListener('touchstart', startTouch, { passive: true });
+    container.addEventListener('touchmove', moveTouch, { passive: true });
+    container.addEventListener('touchend', endTouch, { passive: true });
+    container.addEventListener('mousedown', startTouch);
+    container.addEventListener('mousemove', moveTouch);
+    container.addEventListener('mouseup', endTouch);
   }, 100);
 }
 
