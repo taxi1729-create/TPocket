@@ -769,7 +769,8 @@ function updateActiveDayTabUI(newIdx) {
   });
 }
 
-// 1. スワイプ判定を0.2秒 (200ms) に更新（要件1）
+let isAddingDay = false; // 連続追加を防ぐためのフラグ
+
 function setupSnapScrollListener() {
   setTimeout(() => {
     const container = document.getElementById('snap-scroll-container');
@@ -789,18 +790,27 @@ function setupSnapScrollListener() {
     };
 
     const moveTouch = (e) => {
+      // すでに追加処理中なら新規判定を行わない
+      if (isAddingDay) return;
+
       const currentX = e.touches ? e.touches[0].clientX : e.clientX;
       const diffX = touchStartX - currentX;
 
       const maxScrollLeft = container.scrollWidth - container.clientWidth;
       const isAtEnd = container.scrollLeft >= maxScrollLeft - 10;
 
-      // フリック判定を 0.2秒 (200ms) に設定
+      // 右端かつ左向きスワイプ（diffX > 30）の時に1度だけ追加タイマーをセット
       if (isAtEnd && diffX > 30) {
         if (!holdTimer) {
           holdTimer = setTimeout(() => {
+            isAddingDay = true; // ロックをかける
             addDay(currentShioriId);
             holdTimer = null;
+            
+            // スクロール完了後にロック解除
+            setTimeout(() => {
+              isAddingDay = false;
+            }, 300);
           }, 200); 
         }
       } else {
@@ -825,7 +835,7 @@ function setupSnapScrollListener() {
     container.addEventListener('mousemove', moveTouch);
     container.addEventListener('mouseup', endTouch);
   }, 100);
-}
+};
 
 function scrollToDay(idx) {
   updateActiveDayTabUI(idx);
