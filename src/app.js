@@ -1,65 +1,61 @@
-// LocalStorage Key for persistent data storage
-const STORAGE_KEY = 'tpocket_shioris_data_v2';
+// Provided Firebase Config
+const firebaseConfig = {
+  databaseURL: "https://tpocket-b3eb6-default-rtdb.firebaseio.com/"
+};
 
-const sampleShioris = [
-  {
-    id: 'guam-2026',
-    title: 'グアム3泊4日 🌴 Beach & BBQ',
-    destination: 'グアム',
-    dates: '2026.09.10 - 09.13',
-    headerImg: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
-    days: [
-      {
-        dayNum: 1,
-        title: 'Day 1: 到着 & ビーチBBQ',
-        spots: [
-          {
-            id: 's1',
-            time: '10:00',
-            title: 'グアム国際空港 到着',
-            memo: '入国審査書類の書き方に注意！税関申告アプリ準備済み。',
-            isAfter: false,
-            beforeImg: 'https://images.unsplash.com/photo-1542296332-2e4473faf563?auto=format&fit=crop&w=600&q=80',
-            afterImg: '',
-            reserveLink: 'https://www.guamairport.com/'
-          },
-          {
-            id: 's2',
-            time: '12:30',
-            title: 'ランチ: グアムリーフホテル Reef BBQ',
-            memo: 'オーシャンビュー席で乾杯🍺 予約番号 #GF-8821',
-            isAfter: true,
-            beforeImg: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=600&q=80',
-            afterImg: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80',
-            reserveLink: 'https://guamreef.com'
-          }
-        ]
-      },
-      { dayNum: 2, title: 'Day 2: マリンアクティビティ', spots: [] },
-      { dayNum: 3, title: 'Day 3: ナイトマーケット', spots: [] }
-    ]
-  }
-];
-
-// Persistent LocalStorage Control
-function getShioris() {
-  const data = localStorage.getItem(STORAGE_KEY);
-  if (!data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(sampleShioris));
-    return sampleShioris;
-  }
-  return JSON.parse(data);
+// Initialize Firebase
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
 }
-
-function saveShioris(list) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
-}
-
-function getShioriById(id) {
-  return getShioris().find(s => s.id === id) || null;
-}
+const db = firebase.database();
 
 let currentView = 'home', currentShioriId = null, currentDayIdx = 0;
+let localShioris = [];
+
+// Realtime Firebase Synchronization
+db.ref('shioris').on('value', (snapshot) => {
+  const data = snapshot.val();
+  if (data) {
+    localShioris = Object.keys(data).map(key => ({ id: key, ...data[key] }));
+  } else {
+    // Default Initial Data
+    const initialData = {
+      'guam-2026': {
+        title: 'グアム3泊4日 🌴 Beach & BBQ', destination: 'グアム', dates: '2026.09.10 - 09.13',
+        headerImg: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=800&q=80',
+        days: [
+          {
+            dayNum: 1, title: 'Day 1: 到着 & ビーチBBQ',
+            spots: [
+              { id: 's1', time: '10:00', title: 'グアム国際空港 到着', memo: '入国審査書類の書き方に注意！', isAfter: false, beforeImg: 'https://images.unsplash.com/photo-1542296332-2e4473faf563?auto=format&fit=crop&w=600&q=80', afterImg: '', reserveLink: 'https://www.guamairport.com/' },
+              { id: 's2', time: '12:30', title: 'ランチ: グアムリーフホテル Reef BBQ', memo: 'オーシャンビュー席で乾杯🍺', isAfter: true, beforeImg: 'https://images.unsplash.com/photo-1555396273-367ea4eb4db5?auto=format&fit=crop&w=600&q=80', afterImg: 'https://images.unsplash.com/photo-1544025162-d76694265947?auto=format&fit=crop&w=600&q=80', reserveLink: 'https://guamreef.com' }
+            ]
+          },
+          { dayNum: 2, title: 'Day 2', spots: [] }
+        ]
+      }
+    };
+    db.ref('shioris').set(initialData);
+  }
+  renderApp();
+}, (error) => {
+  console.error("Firebase Error:", error);
+  document.getElementById('app').innerHTML = `
+    <div class="p-6 text-center text-slate-700">
+      <h3 class="font-bold text-red-600 mb-2">通信エラーが発生しました</h3>
+      <p class="text-xs text-slate-500 mb-4">Firebaseのアクセス権限（ルール）が許可されていない可能性があります。</p>
+      <div class="bg-slate-100 p-3 rounded text-left text-[11px] font-mono text-slate-600">
+        Firebase Console > Realtime Database > ルール を開き<br>
+        ".read": true, ".write": true<br>
+        に変更して「公開」を押してください。
+      </div>
+    </div>
+  `;
+});
+
+function saveToCloud(shioriId, shioriData) {
+  db.ref('shioris/' + shioriId).set(shioriData);
+}
 
 function navigateTo(view, id = null) {
   currentView = view;
@@ -75,7 +71,6 @@ function renderApp() {
 }
 
 function renderHomeScreen() {
-  const list = getShioris();
   return `
     <div class="p-5">
       <div class="flex items-center justify-between mb-6">
@@ -83,7 +78,7 @@ function renderHomeScreen() {
           <div class="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg"><i class="fa-solid fa-plane-departure text-xl"></i></div>
           <div><h1 class="text-2xl font-black text-slate-900">TPocket</h1><p class="text-xs text-slate-500 font-medium">みんなで育てる直感旅しおり</p></div>
         </div>
-        <span class="text-xs bg-emerald-50 text-emerald-600 px-2.5 py-1 rounded-full font-bold border border-emerald-200">💾 自動保存ON</span>
+        <span class="text-xs bg-emerald-50 text-emerald-600 px-2.5 py-1 rounded-full font-bold border border-emerald-200">🟢 共有同期中</span>
       </div>
 
       <button onclick="createNewShiori()" class="w-full bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold py-4 px-4 rounded-2xl shadow-lg flex items-center justify-center gap-3 mb-8">
@@ -92,11 +87,11 @@ function renderHomeScreen() {
 
       <div class="mb-4 flex items-center justify-between">
         <h2 class="text-base font-bold text-slate-800 flex items-center gap-2"><i class="fa-solid fa-folder-closed text-blue-500"></i> マイポケット</h2>
-        <span class="text-xs text-slate-400">${list.length}件のしおり</span>
+        <span class="text-xs text-slate-400">${localShioris.length}件のしおり</span>
       </div>
 
       <div class="space-y-4">
-        ${list.map(s => `
+        ${localShioris.map(s => `
           <div onclick="navigateTo('detail', '${s.id}')" class="bg-white border rounded-2xl overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-all">
             <div class="h-32 bg-slate-100 relative">
               <img src="${s.headerImg}" class="w-full h-full object-cover">
@@ -124,23 +119,22 @@ function createNewShiori() {
   const dates = prompt('日程を入力してください:', '2026.09.10 - 09.13') || '日程未定';
 
   const newId = 'shiori-' + Date.now();
-  const list = getShioris();
-  list.unshift({
-    id: newId, title: title, destination: destination, dates: dates,
+  const newData = {
+    title: title, destination: destination, dates: dates,
     headerImg: 'https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=800&q=80',
     days: [
       { dayNum: 1, title: 'Day 1', spots: [] },
       { dayNum: 2, title: 'Day 2', spots: [] }
     ]
-  });
-  saveShioris(list);
+  };
+  saveToCloud(newId, newData);
   navigateTo('detail', newId);
 }
 
 function renderDetailScreen() {
-  const shiori = getShioriById(currentShioriId);
-  if (!shiori) return '<div>しおりが見つかりません</div>';
-  const currentDay = shiori.days[currentDayIdx] || shiori.days[0];
+  const shiori = localShioris.find(s => s.id === currentShioriId);
+  if (!shiori) return '<div class="p-8 text-center text-xs text-slate-400">読み込み中...</div>';
+  const currentDay = (shiori.days && shiori.days[currentDayIdx]) ? shiori.days[currentDayIdx] : { spots: [] };
 
   return `
     <div class="relative bg-slate-50 min-h-screen">
@@ -160,9 +154,8 @@ function renderDetailScreen() {
         </div>
       </div>
 
-      <!-- Days Tab Selector -->
       <div class="px-4 py-3 flex gap-2 overflow-x-auto hide-scrollbar">
-        ${shiori.days.map((d, idx) => `
+        ${(shiori.days || []).map((d, idx) => `
           <button onclick="currentDayIdx = ${idx}; renderApp();" class="px-4 py-2 rounded-xl text-xs font-bold whitespace-nowrap ${currentDayIdx === idx ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border'}">
             Day ${d.dayNum}
           </button>
@@ -170,9 +163,8 @@ function renderDetailScreen() {
         <button onclick="addDay('${shiori.id}')" class="px-3 py-2 rounded-xl text-xs font-bold bg-slate-200 text-slate-700 whitespace-nowrap">+ 日程追加</button>
       </div>
 
-      <!-- Timeline Spots -->
       <div class="p-4 space-y-4 pb-28">
-        ${currentDay.spots.length === 0 ? `
+        ${(!currentDay.spots || currentDay.spots.length === 0) ? `
           <div class="text-center py-12 bg-white rounded-2xl border border-dashed p-6 text-xs text-slate-400">
             この日の予定はまだありません。<br>下の「＋ スポット追加」からプランを作成してください。
           </div>
@@ -196,7 +188,6 @@ function renderDetailScreen() {
 
             ${spot.memo ? `<p class="text-xs text-slate-600 bg-slate-50 p-2.5 rounded-lg">${spot.memo}</p>` : ''}
 
-            <!-- External Custom Link Button -->
             <div class="flex gap-2 pt-1">
               ${spot.reserveLink ? `
                 <a href="${spot.reserveLink}" target="_blank" class="text-xs font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg flex items-center gap-1.5">
@@ -221,16 +212,13 @@ function renderDetailScreen() {
   `;
 }
 
-// Plan / Link Custom Actions with Auto-Save
 function addDay(shioriId) {
-  const list = getShioris();
-  const shiori = list.find(s => s.id === shioriId);
+  const shiori = localShioris.find(s => s.id === shioriId);
   if (shiori) {
+    if (!shiori.days) shiori.days = [];
     const nextDayNum = shiori.days.length + 1;
     shiori.days.push({ dayNum: nextDayNum, title: `Day ${nextDayNum}`, spots: [] });
-    saveShioris(list);
-    currentDayIdx = shiori.days.length - 1;
-    renderApp();
+    saveToCloud(shioriId, { title: shiori.title, destination: shiori.destination, dates: shiori.dates, headerImg: shiori.headerImg, days: shiori.days });
   }
 }
 
@@ -241,67 +229,51 @@ function openAddSpotModal(shioriId) {
   const memo = prompt('メモや注意点を入力してください (任意):', '');
   const reserveLink = prompt('連携するWebリンクURL（予約サイトやGoogle Map等）を入力してください (任意):', '');
 
-  const list = getShioris();
-  const shiori = list.find(s => s.id === shioriId);
+  const shiori = localShioris.find(s => s.id === shioriId);
   if (shiori) {
+    if (!shiori.days[currentDayIdx].spots) shiori.days[currentDayIdx].spots = [];
     shiori.days[currentDayIdx].spots.push({
-      id: 'spot-' + Date.now(),
-      time: time,
-      title: title,
-      memo: memo,
-      isAfter: false,
+      id: 'spot-' + Date.now(), time: time, title: title, memo: memo, isAfter: false,
       beforeImg: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?auto=format&fit=crop&w=600&q=80',
-      afterImg: '',
-      reserveLink: reserveLink
+      afterImg: '', reserveLink: reserveLink
     });
-    saveShioris(list);
-    renderApp();
+    saveToCloud(shioriId, { title: shiori.title, destination: shiori.destination, dates: shiori.dates, headerImg: shiori.headerImg, days: shiori.days });
   }
 }
 
 function addWebLink(shioriId, dayIdx, spotIdx) {
   const url = prompt('保存・紐付けるWebリンクURLを入力してください:');
   if (url) {
-    const list = getShioris();
-    const shiori = list.find(s => s.id === shioriId);
+    const shiori = localShioris.find(s => s.id === shioriId);
     if (shiori) {
       shiori.days[dayIdx].spots[spotIdx].reserveLink = url;
-      saveShioris(list);
-      renderApp();
+      saveToCloud(shioriId, { title: shiori.title, destination: shiori.destination, dates: shiori.dates, headerImg: shiori.headerImg, days: shiori.days });
     }
   }
 }
 
 function toggleBeforeAfter(shioriId, dayIdx, spotIdx) {
-  const list = getShioris();
-  const shiori = list.find(s => s.id === shioriId);
+  const shiori = localShioris.find(s => s.id === shioriId);
   if (shiori) {
     const spot = shiori.days[dayIdx].spots[spotIdx];
     spot.isAfter = !spot.isAfter;
-    saveShioris(list);
-    renderApp();
+    saveToCloud(shioriId, { title: shiori.title, destination: shiori.destination, dates: shiori.dates, headerImg: shiori.headerImg, days: shiori.days });
   }
 }
 
 function deleteSpot(shioriId, dayIdx, spotIdx) {
   if (confirm('この予定を削除しますか？')) {
-    const list = getShioris();
-    const shiori = list.find(s => s.id === shioriId);
+    const shiori = localShioris.find(s => s.id === shioriId);
     if (shiori) {
       shiori.days[dayIdx].spots.splice(spotIdx, 1);
-      saveShioris(list);
-      renderApp();
+      saveToCloud(shioriId, { title: shiori.title, destination: shiori.destination, dates: shiori.dates, headerImg: shiori.headerImg, days: shiori.days });
     }
   }
 }
 
 function deleteShiori(shioriId) {
   if (confirm('この旅のしおりを完全に削除しますか？')) {
-    let list = getShioris();
-    list = list.filter(s => s.id !== shioriId);
-    saveShioris(list);
+    db.ref('shioris/' + shioriId).remove();
     navigateTo('home');
   }
 }
-
-document.addEventListener('DOMContentLoaded', renderApp);
