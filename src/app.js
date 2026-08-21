@@ -1184,7 +1184,7 @@ function renderEditSpotModal(shiori) {
               </select>
               <span>:</span>
               <select id="edit-minute" class="time-picker-select text-xs">
-                ${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`; }).join('')}
+                ${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}
               </select>
             </div>
             <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
