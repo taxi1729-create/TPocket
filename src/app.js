@@ -1010,7 +1010,7 @@ function setupSnapScrollListener() {
           holdTimer = setTimeout(() => {
             addDay(currentShioriId);
             holdTimer = null;
-          }, 100); 
+          }, 500); 
         }
       } else {
         if (holdTimer) {
