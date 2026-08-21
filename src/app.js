@@ -7,8 +7,12 @@ if (!firebase.apps.length) {
 }
 const db = firebase.database();
 
+// URLパラメータからグループIDを取得（共有リンク対応）
+const urlParams = new URLSearchParams(window.location.search);
+const sharedGroupId = urlParams.get('group');
+
 let currentView = 'home';
-let currentGroupId = localStorage.getItem('tpocket_group_id') || 'default-group';
+let currentGroupId = sharedGroupId || localStorage.getItem('tpocket_group_id') || 'default-group';
 let currentShioriId = null;
 let currentDayIdx = 0;
 let localGroups = {};
@@ -32,12 +36,15 @@ db.ref('appData').on('value', (snapshot) => {
       if (!localGroups[gId].members) {
         localGroups[gId].members = ['自分', 'メンバーA'];
       }
+      if (!localGroups[gId].accountingUrl) {
+        localGroups[gId].accountingUrl = '';
+      }
     });
     localShioris = data.shioris ? Object.keys(data.shioris).map(k => ({ id: k, ...data.shioris[k] })) : [];
   } else {
     const initialData = {
       groups: {
-        'default-group': { name: 'メイン旅行グループ', pass: '1234', members: ['自分', 'メンバーA'] },
+        'default-group': { name: 'メイン旅行グループ', pass: '1234', members: ['自分', 'メンバーA'], accountingUrl: '' },
       },
       shioris: {
         'default-shiori': {
@@ -130,9 +137,39 @@ function handleImageUpload(inputId, callback) {
   reader.readAsDataURL(el.files[0]);
 }
 
-// 4. 旅行一覧画面（マイポケット）＆削除ボタンの追加
+// 会計Webアプリを開く
+function openAccountingApp(gId) {
+  const group = localGroups[gId || currentGroupId];
+  if (group && group.accountingUrl) {
+    let url = group.accountingUrl.trim();
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+    window.open(url, '_blank');
+  } else {
+    alert('会計リンクが設定されていません。グループ設定から登録してください。');
+  }
+}
+
+// 5. グループ共有リンクのコピー
+function copyGroupShareLink(gId) {
+  const baseUrl = window.location.origin + window.location.pathname;
+  const shareUrl = `${baseUrl}?group=${gId}`;
+  
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(shareUrl).then(() => {
+      alert('グループ専用の共有リンクをコピーしました！');
+    }).catch(() => {
+      prompt('以下のリンクをコピーして共有してください:', shareUrl);
+    });
+  } else {
+    prompt('以下のリンクをコピーして共有してください:', shareUrl);
+  }
+}
+
+// 4. 旅行一覧画面（マイポケット）＆共有リンク機能
 function renderHomeScreen() {
-  const currentGroup = localGroups[currentGroupId] || { name: '未選択', members: [] };
+  const currentGroup = localGroups[currentGroupId] || { name: '未選択', members: [], accountingUrl: '' };
   const groupShioris = localShioris.filter(s => s.groupId === currentGroupId);
   const members = currentGroup.members || [];
 
@@ -146,23 +183,40 @@ function renderHomeScreen() {
         <button onclick="navigateTo('groupAuth')" class="text-xs bg-slate-800 text-white px-3 py-2 rounded-xl font-bold flex items-center gap-1.5 shadow-md"><i class="fa-solid fa-gear"></i> 設定</button>
       </div>
 
-      <!-- 共有メンバー編集エリア -->
-      <div class="bg-white border rounded-2xl p-3.5 mb-5 shadow-sm space-y-2">
-        <div class="flex items-center justify-between">
-          <h2 class="text-xs font-bold text-slate-700 flex items-center gap-1.5"><i class="fa-solid fa-users text-blue-500"></i> グループ共有メンバー</h2>
-          <span class="text-[10px] text-slate-400 font-bold">${members.length}人</span>
+      <!-- グループ共有・会計リンクエリア -->
+      <div class="bg-white border rounded-2xl p-3.5 mb-5 shadow-sm space-y-3">
+        <div class="flex items-center justify-between border-b pb-2">
+          <h2 class="text-xs font-bold text-slate-700 flex items-center gap-1.5"><i class="fa-solid fa-users text-blue-500"></i> グループ情報</h2>
+          <div class="flex gap-1.5">
+            <!-- 5. 共有リンクボタン -->
+            <button onclick="copyGroupShareLink('${currentGroupId}')" class="text-[10px] bg-blue-50 text-blue-600 border border-blue-200 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1">
+              <i class="fa-solid fa-share-nodes"></i> 共有リンク
+            </button>
+            <!-- 2. 会計リンクボタン -->
+            ${currentGroup.accountingUrl ? `
+              <button onclick="openAccountingApp('${currentGroupId}')" class="text-[10px] bg-emerald-50 text-emerald-600 border border-emerald-200 font-bold px-2.5 py-1 rounded-lg flex items-center gap-1">
+                <i class="fa-solid fa-calculator"></i> 会計
+              </button>
+            ` : ''}
+          </div>
         </div>
-        <div class="flex flex-wrap gap-1.5">
-          ${members.map((m, idx) => `
-            <span class="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1">
-              ${m}
-              <button onclick="deleteGroupMember('${currentGroupId}', ${idx})" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-[10px]"></i></button>
-            </span>
-          `).join('')}
-        </div>
-        <div class="flex items-center gap-2 pt-1 border-t mt-2">
-          <input type="text" id="new-group-member-name" placeholder="メンバー名を追加" class="flex-1 border text-xs rounded-lg p-1.5 bg-slate-50">
-          <button onclick="addGroupMember('${currentGroupId}')" class="bg-blue-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg">追加</button>
+
+        <div class="space-y-1.5">
+          <div class="flex justify-between items-center">
+            <span class="text-[10px] text-slate-400 font-bold">共有メンバー (${members.length}人)</span>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            ${members.map((m, idx) => `
+              <span class="bg-slate-100 text-slate-700 text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1">
+                ${m}
+                <button onclick="deleteGroupMember('${currentGroupId}', ${idx})" class="text-slate-400 hover:text-red-500"><i class="fa-solid fa-xmark text-[10px]"></i></button>
+              </span>
+            `).join('')}
+          </div>
+          <div class="flex items-center gap-2 pt-1 border-t mt-2">
+            <input type="text" id="new-group-member-name" placeholder="メンバー名を追加" class="flex-1 border text-xs rounded-lg p-1.5 bg-slate-50">
+            <button onclick="addGroupMember('${currentGroupId}')" class="bg-blue-600 text-white font-bold text-xs px-3 py-1.5 rounded-lg">追加</button>
+          </div>
         </div>
       </div>
 
@@ -183,7 +237,6 @@ function renderHomeScreen() {
                 <h3 class="font-bold text-base mt-1">${s.title}</h3>
               </div>
             </div>
-            <!-- 4. 旅行予定削除ボタン -->
             <button onclick="deleteShiori('${s.id}')" class="absolute top-2.5 right-2.5 bg-black/50 hover:bg-red-600 text-white w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm transition-all shadow">
               <i class="fa-solid fa-trash text-xs"></i>
             </button>
@@ -219,14 +272,13 @@ function deleteGroupMember(gId, idx) {
   }
 }
 
-// 5. 設定画面に「管理者」ボタンの追加とパスワード可視化
+// 2. 設定画面（会計リンク入力フォームの追加）
 function renderGroupAuthScreen() {
   return `
     <div class="p-5 space-y-6">
       <div class="flex items-center justify-between border-b pb-3">
         <button onclick="navigateTo('home')" class="text-xs font-bold text-blue-600"><i class="fa-solid fa-arrow-left"></i> 戻る</button>
         <h2 class="font-bold text-base">グループ管理</h2>
-        <!-- 管理者ボタン -->
         <button onclick="toggleAdminAuth()" class="text-xs ${isAdmin ? 'bg-amber-500 text-white' : 'bg-slate-200 text-slate-700'} font-bold px-3 py-1.5 rounded-lg flex items-center gap-1">
           <i class="fa-solid ${isAdmin ? 'fa-lock-open' : 'fa-lock'}"></i> ${isAdmin ? '管理者ON' : '管理者'}
         </button>
@@ -241,17 +293,25 @@ function renderGroupAuthScreen() {
               <div class="flex items-center justify-between">
                 <div>
                   <span class="font-bold text-sm">${g.name} ${isCurrent ? '<span class="text-[10px] bg-blue-600 text-white px-2 py-0.5 rounded-full ml-1">選択中</span>' : ''}</span>
-                  <!-- 管理者認証済みの場合パスワード可視化 -->
                   ${isAdmin ? `<div class="text-[11px] font-mono text-amber-600 font-bold mt-0.5"><i class="fa-solid fa-key text-[10px]"></i> PW: ${g.pass}</div>` : ''}
                 </div>
-                <button onclick="authAndEditGroup('${gId}')" class="text-[10px] text-slate-500 bg-slate-100 px-2 py-1 rounded">編集</button>
+                <div class="flex gap-1">
+                  <button onclick="copyGroupShareLink('${gId}')" class="text-[10px] text-blue-600 bg-blue-50 px-2 py-1 rounded font-bold"><i class="fa-solid fa-share-nodes"></i> 共有</button>
+                  <button onclick="authAndEditGroup('${gId}')" class="text-[10px] text-slate-500 bg-slate-100 px-2 py-1 rounded">編集</button>
+                </div>
               </div>
+
               ${editingGroupId === gId ? `
                 <div class="mt-2 p-3 bg-slate-50 border rounded-xl space-y-2">
                   <label class="text-[10px] font-bold text-slate-500">名称変更</label>
                   <input type="text" id="edit-g-name-${gId}" value="${g.name}" class="w-full border text-xs rounded p-2">
                   <label class="text-[10px] font-bold text-slate-500">パスワード変更</label>
                   <input type="${isAdmin ? 'text' : 'password'}" id="edit-g-pass-${gId}" value="${g.pass}" class="w-full border text-xs rounded p-2">
+                  
+                  <!-- 2. 会計Webアプリのリンク編集 -->
+                  <label class="text-[10px] font-bold text-slate-500 flex items-center gap-1"><i class="fa-solid fa-calculator text-emerald-600"></i> 会計WebアプリURL</label>
+                  <input type="url" id="edit-g-acc-${gId}" value="${g.accountingUrl || ''}" placeholder="https://..." class="w-full border text-xs rounded p-2 bg-white">
+
                   <div class="flex gap-2 pt-2">
                     <button onclick="saveEditedGroup('${gId}')" class="flex-1 bg-blue-600 text-white font-bold py-2 rounded-lg text-xs">保存</button>
                     <button onclick="deleteGroup('${gId}')" class="flex-1 bg-red-500 text-white font-bold py-2 rounded-lg text-xs">削除</button>
@@ -275,13 +335,13 @@ function renderGroupAuthScreen() {
         <h3 class="text-xs font-bold"><i class="fa-solid fa-plus-circle text-blue-600"></i> 新規作成</h3>
         <input type="text" id="new-group-name" placeholder="グループ名" class="w-full border text-xs rounded-lg p-2.5">
         <input type="password" id="new-group-pass" placeholder="パスワード" class="w-full border text-xs rounded-lg p-2.5">
+        <input type="url" id="new-group-acc" placeholder="会計WebアプリURL (任意)" class="w-full border text-xs rounded-lg p-2.5">
         <button onclick="createNewGroup()" class="w-full bg-slate-800 text-white font-bold py-2.5 rounded-xl text-xs">新規作成</button>
       </div>
     </div>
   `;
 }
 
-// 5. 管理者認証トグル (パスワード: 750651)
 function toggleAdminAuth() {
   if (isAdmin) {
     isAdmin = false;
@@ -297,6 +357,7 @@ function toggleAdminAuth() {
   }
 }
 
+// 3, 4. 詳細画面（黒枠の上部固定・会計ボタン配置・フリック文言更新）
 function renderDetailScreen() {
   const shiori = localShioris.find(s => s.id === currentShioriId);
   if (!shiori) return '...';
@@ -304,16 +365,27 @@ function renderDetailScreen() {
   if (!shiori.packingList) shiori.packingList = [];
   if (shiori.showPackingList === undefined) shiori.showPackingList = true;
 
-  const currentGroup = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'] };
+  const currentGroup = localGroups[shiori.groupId || currentGroupId] || { members: ['全員'], accountingUrl: '' };
   const groupMembers = currentGroup.members || [];
 
   return `
     <div class="relative bg-slate-50 min-h-screen flex flex-col">
-      <!-- 2. 黒い枠の固定化（sticky top-0 z-50 でスクロールしても上部固定） -->
-      <div class="sticky top-0 z-50 bg-slate-900 text-white p-3 px-4 flex justify-between items-center shadow-md">
-        <button onclick="navigateTo('home')" class="text-xs font-bold flex items-center gap-1.5 hover:text-blue-400"><i class="fa-solid fa-arrow-left"></i> 旅行一覧</button>
-        <span class="text-xs font-black truncate max-w-[160px] text-center">${shiori.title}</span>
-        <button onclick="showAllScheduleModal = true; renderApp();" class="text-xs bg-blue-600 px-3 py-1.5 rounded-lg font-bold">全一覧</button>
+      <!-- 3. 黒い枠の固定化（sticky top-0 z-50） & 4. 会計ボタンを固定ヘッダーに設置 -->
+      <div class="sticky top-0 z-50 bg-slate-900 text-white p-3 px-4 flex justify-between items-center shadow-lg w-full">
+        <button onclick="navigateTo('home')" class="text-xs font-bold flex items-center gap-1.5 hover:text-blue-400">
+          <i class="fa-solid fa-arrow-left"></i> 一覧
+        </button>
+        <span class="text-xs font-black truncate max-w-[120px] text-center">${shiori.title}</span>
+        
+        <div class="flex items-center gap-1.5">
+          <!-- 4. 会計リンクボタン -->
+          <button onclick="openAccountingApp('${shiori.groupId || currentGroupId}')" class="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg font-bold flex items-center gap-1 shadow">
+            <i class="fa-solid fa-calculator"></i> 会計
+          </button>
+          <button onclick="showAllScheduleModal = true; renderApp();" class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1.5 rounded-lg font-bold shadow">
+            全一覧
+          </button>
+        </div>
       </div>
 
       <!-- ヘッダー画像・タイトル -->
@@ -414,9 +486,9 @@ function renderDetailScreen() {
         </div>
       </div>
 
-      <!-- スワイプ案内 -->
+      <!-- 1. スワイプ案内文言修正 -->
       <div class="text-center py-2 bg-slate-100 border-b text-[11px] text-slate-500 font-bold flex items-center justify-center gap-2">
-        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 （端で2秒長押しフリックでDay追加） 👉
+        <i class="fa-solid fa-hand-pointer text-blue-500 animate-pulse"></i> 👈 スワイプでDay切替 (右端で長押しフリックでDay追加) 👉
       </div>
 
       <!-- シームレス横フリック (CSS Scroll Snap) -->
@@ -479,7 +551,7 @@ function renderDetailScreen() {
                 </div>
               </div>
 
-              <!-- 1. 予定追加フォーム & 修正された追加ボタン -->
+              <!-- 予定追加フォーム -->
               <div class="bg-blue-50/80 border border-blue-200 rounded-2xl p-3 space-y-2.5 mt-4">
                 <h4 class="text-[11px] font-bold text-blue-900"><i class="fa-solid fa-plus-circle text-blue-600"></i> ${displayTitle} に予定を追加</h4>
                 <input type="hidden" id="input-icon-${dIdx}" value="✈️">
@@ -519,7 +591,6 @@ function renderDetailScreen() {
                   </div>
                 </div>
 
-                <!-- 1. 追加ボタン (onclickイベント修正済み) -->
                 <button onclick="addSpotInline('${shiori.id}', ${dIdx})" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 rounded-xl text-xs shadow-sm">追加する</button>
               </div>
             </div>
@@ -629,17 +700,17 @@ function renderEditSpotModal(shiori) {
           </div>
 
           <div class="flex gap-2 items-center">
-          <div class="flex items-center gap-0.5 bg-slate-50 px-2 py-1 border rounded-lg">
-           <select id="edit-hour" class="time-picker-select text-xs">
-              ${Array.from({length:24}).map((_,h) => { const hs = String(h).padStart(2,'0'); return `<option value="${hs}" ${hs === hh ? 'selected' : ''}>${hs}</option>`; }).join('')}
-            </select>
-            <span>:</span>
-            <select id="edit-minute" class="time-picker-select text-xs">
-              ${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}
-            </select>
+            <div class="flex items-center gap-0.5 bg-slate-50 px-2 py-1 border rounded-lg">
+             <select id="edit-hour" class="time-picker-select text-xs">
+                ${Array.from({length:24}).map((_,h) => { const hs = String(h).padStart(2,'0'); return `<option value="${hs}" ${hs === hh ? 'selected' : ''}>${hs}</option>`; }).join('')}
+              </select>
+              <span>:</span>
+              <select id="edit-minute" class="time-picker-select text-xs">
+                ${['00','15','30','45'].map(m => `<option value="${m}" ${m === mm ? 'selected' : ''}>${m}</option>`).join('')}
+              </select>
+            </div>
+            <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
           </div>
-          <input type="text" id="edit-title" value="${spot.title}" class="border text-xs rounded p-2 flex-1 font-bold">
-        </div>
 
           <input type="text" id="edit-memo" value="${spot.memo || ''}" placeholder="メモ" class="w-full border text-xs rounded p-2">
           
@@ -716,7 +787,6 @@ function renderAllScheduleModal(shiori) {
   `;
 }
 
-// --- 修正箇所（構文エラーの解消） ---
 function authAndSwitchGroup(gId) {
   const inputEl = document.getElementById('pass-' + gId);
   if (!inputEl) return;
@@ -741,15 +811,20 @@ function authAndEditGroup(gId) {
   }
 }
 
+// 2. 会計リンク保存の更新
 function saveEditedGroup(gId) {
   const nameEl = document.getElementById('edit-g-name-' + gId);
   const passEl = document.getElementById('edit-g-pass-' + gId);
+  const accEl = document.getElementById('edit-g-acc-' + gId);
   if (!nameEl || !passEl) return;
   const newName = nameEl.value;
   const newPass = passEl.value;
   if (!newName || !newPass) return alert('入力不足です');
+  
   localGroups[gId].name = newName;
   localGroups[gId].pass = newPass;
+  localGroups[gId].accountingUrl = accEl ? accEl.value.trim() : '';
+
   editingGroupId = null;
   saveAllToCloud();
   renderApp();
@@ -770,12 +845,15 @@ function deleteGroup(gId) {
 function createNewGroup() {
   const nameEl = document.getElementById('new-group-name');
   const passEl = document.getElementById('new-group-pass');
+  const accEl = document.getElementById('new-group-acc');
   if (!nameEl) return;
   const name = nameEl.value;
   const pass = (passEl && passEl.value) ? passEl.value : '1234';
+  const accountingUrl = accEl ? accEl.value.trim() : '';
+
   if (!name) return alert('入力してください');
   const newGId = 'group-' + Date.now();
-  localGroups[newGId] = { name, pass, members: ['自分'] };
+  localGroups[newGId] = { name, pass, members: ['自分'], accountingUrl };
   currentGroupId = newGId;
   localStorage.setItem('tpocket_group_id', newGId);
   saveAllToCloud();
@@ -824,7 +902,6 @@ function saveEditSpot(shioriId) {
   });
 }
 
-// 1. 予定追加関数の修正 (エレメント値読み取りの不具合解消)
 function addSpotInline(shioriId, dIdx) {
   const titleEl = document.getElementById('input-title-' + dIdx);
   if (!titleEl || !titleEl.value.trim()) return alert('予定名を入力してください');
@@ -928,7 +1005,7 @@ function deletePackingItem(shioriId, idx) {
   renderApp();
 }
 
-// 3. 最後のDayで右から左へスワイプし2秒維持で自動Day追加
+// 1. ポップアップ削除 & 0.8秒（800ms）ホールド判定への修正
 let holdTimer = null;
 let touchStartX = 0;
 
@@ -945,7 +1022,6 @@ function setupSnapScrollListener() {
       }
     });
 
-    // 3. 長押しフリック（2秒ホールド）検出
     const startTouch = (e) => {
       touchStartX = e.touches ? e.touches[0].clientX : e.clientX;
       if (holdTimer) clearTimeout(holdTimer);
@@ -958,14 +1034,13 @@ function setupSnapScrollListener() {
       const maxScrollLeft = container.scrollWidth - container.clientWidth;
       const isAtEnd = container.scrollLeft >= maxScrollLeft - 10;
 
-      // 最後のDayかつ右から左へフリック中(diffX > 30)
+      // 1. 最後のDayかつ右から左へフリック中、0.8秒(800ms)保持でポップアップなし自動追加
       if (isAtEnd && diffX > 30) {
         if (!holdTimer) {
           holdTimer = setTimeout(() => {
             addDay(currentShioriId);
-            alert('新しいDayを追加しました！');
             holdTimer = null;
-          }, 2000); // 2秒間ホールド
+          }, 800); 
         }
       } else {
         if (holdTimer) {
